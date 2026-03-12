@@ -101,20 +101,24 @@ module decoder (
                 alu_src   = 1;
                 alu_op    = 4'b0000;
             end
-            7'b0100011: begin // Store
+            // Store
+            7'b0100011: begin
                 mem_write = 1;
                 alu_src   = 1;
                 alu_op    = 4'b0000;
             end
-            7'b1100011: begin // Branch
+            // Branch
+            7'b1100011: begin
                 branch    = 1;
                 alu_op    = 4'b0001; 
             end
-            7'b1101111: begin // JAL
+            // JAL
+            7'b1101111: begin
                 reg_write = 1;
                 jal       = 1;
             end
-            7'b1100111: begin // JALR
+            // JALR
+            7'b1100111: begin
                 reg_write = 1;
                 jalr      = 1;
                 alu_src   = 1;
