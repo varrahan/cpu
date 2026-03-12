@@ -93,9 +93,7 @@ module top (
         .rs2_data (id_rs2_data)
     );
 
-    // =========================================================================
-    // EXECUTE STAGE WIRES & HAZARD/FORWARDING
-    // =========================================================================
+    // Execute wires with hazarding and forwarding logic
     wire [31:0] ex_pc, ex_rs1_data, ex_rs2_data, ex_imm;
     wire [4:0]  ex_rs1_addr, ex_rs2_addr, ex_rd;
     wire [3:0]  ex_alu_op;
@@ -155,7 +153,7 @@ module top (
         .fwd_b         (fwd_b)
     );
     
-    // ALU Input Muxes with Forwarding incorporated
+    // ALU input muxes with forwarding
     assign fwd_rs1 = (fwd_a == 2'b10) ? mem_alu_result :
                      (fwd_a == 2'b01) ? wb_data : ex_rs1_data;
     assign fwd_rs2 = (fwd_b == 2'b10) ? mem_alu_result :
@@ -192,9 +190,7 @@ module top (
     wire [31:0] ex_alu_result_final;
     assign ex_alu_result_final = (ex_jal || ex_jalr) ? (ex_pc + 4) : alu_result;
 
-    // =========================================================================
-    // MEMORY STAGE WIRES
-    // =========================================================================
+    // Memory wires
     wire [31:0] mem_rs2_data, mem_branch_target;
     wire        mem_mem_read, mem_mem_write, mem_branch_taken;
     wire [2:0]  mem_funct3;
@@ -239,9 +235,7 @@ module top (
         .rdata      (mem_rdata)
     );
     
-    // =========================================================================
-    // WRITEBACK STAGE WIRES
-    // =========================================================================
+    // Writeback wires
     wire [31:0] wb_alu_result, wb_mem_rdata;
     wire        wb_mem_read;
 
@@ -268,9 +262,7 @@ module top (
         .wb_data    (wb_data)
     );
     
-    // =========================================================================
-    // DEBUG OUTPUTS
-    // =========================================================================
+    // Debugging outputs
     assign dbg_pc       = if_pc;
     assign dbg_instr_if = if_instr;
     assign dbg_instr_id = id_instr;
