@@ -1,4 +1,4 @@
-module id_ex_reg (
+module decode_execute_register (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        flush,
