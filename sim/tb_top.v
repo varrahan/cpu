@@ -72,7 +72,7 @@ module tb_top;
             imem[4]  = 32'h00010093; // addi x1, x2, 0   ; mv x1, x2
             imem[5]  = 32'h00018113; // addi x2, x3, 0   ; mv x2, x3
             imem[6]  = 32'hfff20213; // addi x4, x4, -1  ; counter--
-            imem[7]  = 32'hfe021ce3; // bne  x4, x0, loop (-8*4 -> loop at imem[3])
+            imem[7]  = 32'hfe0218e3;; // bne  x4, x0, loop (-8*4 -> loop at imem[3])
             
             imem[8]  = 32'h00212023; // sw   x2, 0(x2)   ; store result 
             imem[9]  = 32'h00200023; // sw   x2, 0(x0)   ; store F(10) to addr 0
@@ -120,7 +120,7 @@ module tb_top;
         #15;
         rst_n = 1;
 
-        repeat(60) begin
+        repeat(100) begin
             @(posedge clk);
             #1;
             $display("%6d | %08h | 0x%08h | %5s | %5s | 0x%08h",
