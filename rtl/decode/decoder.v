@@ -26,7 +26,6 @@ module decoder (
     assign rs2    = instr[24:20];
     assign rd     = instr[11:7];
 
-    // Immediate generation
     always @(*) begin
         case (opcode)
             7'b0010011, // I-type ALU
@@ -124,11 +123,13 @@ module decoder (
                 alu_src   = 1;
                 alu_op    = 4'b0000;
             end
-            7'b0110111: begin // LUI
+            // LUI
+            7'b0110111: begin
                 reg_write = 1;
                 lui       = 1;
             end
-            7'b0010111: begin // AUIPC
+            // AUIPC
+            7'b0010111: begin
                 reg_write = 1;
                 auipc     = 1;
             end
