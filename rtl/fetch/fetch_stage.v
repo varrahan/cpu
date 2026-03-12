@@ -1,4 +1,4 @@
-module if_stage (
+module fetch_stage (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        stall,
@@ -13,7 +13,6 @@ module if_stage (
     reg  [31:0] pc;
     reg  [31:0] pc_next;
 
-    // PC register
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             pc <= 32'h0000_0000;
@@ -21,7 +20,6 @@ module if_stage (
             pc <= pc_next;
     end
 
-    // Next PC logic
     always @(*) begin
         if (branch_taken)
             pc_next = branch_target;
@@ -29,8 +27,7 @@ module if_stage (
             pc_next = pc + 4;
     end
 
-    // Instruction memory read
     assign imem_addr = pc;
     assign pc_out    = pc;
-    assign instr_out = flush ? 32'h0000_0013 : imem_data; // NOP on flush
+    assign instr_out = flush ? 32'h0000_0013 : imem_data;
 endmodule
