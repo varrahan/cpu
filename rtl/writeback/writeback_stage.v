@@ -1,4 +1,4 @@
-module wb_stage (
+module writeback_stage (
     input  wire [31:0] alu_result,
     input  wire [31:0] mem_rdata,
     input  wire        mem_read,
