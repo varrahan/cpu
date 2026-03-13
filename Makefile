@@ -1,6 +1,7 @@
 CC = iverilog
 SIM = vvp
 OUT = sim/top_sim.vvp
+WAVE = sim/top_wave.vcd
 
 FETCH_SRC = rtl/fetch/fetch_stage.v
 
@@ -35,5 +36,6 @@ run:
 	$(SIM) $(OUT)
 
 clean:
-	rm -f $(OUT) *.vcd
+	rm -f $(OUT) $(WAVE)
+
 	@echo "Clean complete."
