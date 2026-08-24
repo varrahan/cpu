@@ -41,7 +41,10 @@ module top (
     reg  [31:0] id_pc, id_instr;
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n || flush_if) begin
+        if (!rst_n) begin
+            id_pc    <= 0;
+            id_instr <= 32'h0000_0013; // NOP
+        end else if (flush_if) begin
             id_pc    <= 0;
             id_instr <= 32'h0000_0013; // NOP
         end else if (!stall_if) begin

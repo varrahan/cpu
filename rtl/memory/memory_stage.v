@@ -11,6 +11,8 @@ module memory_stage (
     input  wire [31:0] dmem_rdata,
     output reg  [31:0] rdata
 );
+    wire [31:0] aligned_rdata = dmem_rdata >> (addr[1:0] * 8);
+
     assign dmem_addr  = addr;
     assign dmem_we    = mem_write;
 
@@ -40,11 +42,11 @@ module memory_stage (
         rdata = 32'b0;
         if (mem_read) begin
             case (funct3)
-                3'b000: rdata = {{24{dmem_rdata[7]}},  dmem_rdata[7:0]};
-                3'b001: rdata = {{16{dmem_rdata[15]}}, dmem_rdata[15:0]};
+                3'b000: rdata = {{24{aligned_rdata[7]}},  aligned_rdata[7:0]};
+                3'b001: rdata = {{16{aligned_rdata[15]}}, aligned_rdata[15:0]};
                 3'b010: rdata = dmem_rdata;
-                3'b100: rdata = {24'b0, dmem_rdata[7:0]};
-                3'b101: rdata = {16'b0, dmem_rdata[15:0]};
+                3'b100: rdata = {24'b0, aligned_rdata[7:0]};
+                3'b101: rdata = {16'b0, aligned_rdata[15:0]};
                 default: rdata = dmem_rdata;
             endcase
         end

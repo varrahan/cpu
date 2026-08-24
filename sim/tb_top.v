@@ -82,6 +82,30 @@ module tb_top;
             for (i = 11; i < 256; i = i + 1) begin
                 imem[i] = 32'h00000013;
             end
+    end
+    endtask
+
+    task load_memory_hazards;
+        begin
+            imem[0]  = 32'h02a00093; // addi x1, x0, 42
+            imem[1]  = 32'h00102023; // sw   x1, 0(x0)
+            imem[2]  = 32'h00002103; // lw   x2, 0(x0)
+            imem[3]  = 32'h00110193; // addi x3, x2, 1 (load-use)
+            imem[4]  = 32'h00302423; // sw   x3, 8(x0)
+            imem[5]  = 32'hf8000213; // addi x4, x0, -128
+            imem[6]  = 32'h004002a3; // sb   x4, 5(x0)
+            imem[7]  = 32'h00500283; // lb   x5, 5(x0)
+            imem[8]  = 32'h00502623; // sw   x5, 12(x0)
+            imem[9]  = 32'h00504303; // lbu  x6, 5(x0)
+            imem[10] = 32'h00602823; // sw   x6, 16(x0)
+            imem[11] = 32'h000083b7; // lui  x7, 8
+            imem[12] = 32'h00138393; // addi x7, x7, 1
+            imem[13] = 32'h00701323; // sh   x7, 6(x0)
+            imem[14] = 32'h00601403; // lh   x8, 6(x0)
+            imem[15] = 32'h00802a23; // sw   x8, 20(x0)
+            imem[16] = 32'h00605483; // lhu  x9, 6(x0)
+            imem[17] = 32'h00902c23; // sw   x9, 24(x0)
+            imem[18] = 32'h0000006f; // jal  x0, 0
         end
     endtask
 
@@ -140,12 +164,26 @@ module tb_top;
         $display(" dmem[0x0]    : 0x%08h (%0d) -- expected 55", dmem[0], dmem[0]);
         $display("=======================================================");
         
-        if (dmem[0] == 32'd55)
-            $display(" PASS: Fibonacci F(10) = 55 CORRECT!");
-        else
-            $display(" FAIL: Got %0d, expected 55", dmem[0]);
-            
-        $display("=======================================================");
+        if (dmem[0] != 32'd55)
+            $fatal(1, "Fibonacci: got %0d, expected 55", dmem[0]);
+
+        rst_n = 0;
+        for (i = 0; i < 256; i = i + 1) begin
+            imem[i] = 32'h00000013;
+            dmem[i] = 32'h0;
+        end
+        load_memory_hazards();
+        repeat (2) @(posedge clk);
+        rst_n = 1;
+        repeat (60) @(posedge clk);
+
+        if (dmem[2] != 32'd43 || dmem[3] != 32'hffff_ff80 ||
+            dmem[4] != 32'h0000_0080 || dmem[5] != 32'hffff_8001 ||
+            dmem[6] != 32'h0000_8001)
+            $fatal(1, "Memory/hazard failure: %h %h %h %h %h",
+                   dmem[2], dmem[3], dmem[4], dmem[5], dmem[6]);
+
+        $display(" PASS: CPU regression complete");
         $finish;
     end
 
