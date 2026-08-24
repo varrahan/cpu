@@ -10,14 +10,6 @@ module tb_top;
     wire [31:0] dmem_wdata;
     wire        dmem_we;
     wire [3:0]  dmem_be;
-    wire [31:0] dbg_pc;
-    wire [31:0] dbg_instr_if;
-    wire [31:0] dbg_instr_id;
-    wire [4:0]  dbg_rd_ex;
-    wire [4:0]  dbg_rd_mem;
-    wire [4:0]  dbg_rd_wb;
-    wire        dbg_stall;
-    wire        dbg_flush;
     reg [31:0] imem [0:255];
     reg [31:0] dmem [0:255];
 
@@ -46,15 +38,7 @@ module tb_top;
         .dmem_wdata  (dmem_wdata),
         .dmem_we     (dmem_we),
         .dmem_be     (dmem_be),
-        .dmem_rdata  (dmem_rdata),
-        .dbg_pc      (dbg_pc),
-        .dbg_instr_if(dbg_instr_if),
-        .dbg_instr_id(dbg_instr_id),
-        .dbg_rd_ex   (dbg_rd_ex),
-        .dbg_rd_mem  (dbg_rd_mem),
-        .dbg_rd_wb   (dbg_rd_wb),
-        .dbg_stall   (dbg_stall),
-        .dbg_flush   (dbg_flush)
+        .dmem_rdata  (dmem_rdata)
     );
 
     integer i;
@@ -113,8 +97,8 @@ module tb_top;
     always @(posedge clk) begin
         if (rst_n) begin
             cycle_count = cycle_count + 1;
-            if (dbg_stall) stall_count = stall_count + 1;
-            if (dbg_flush) flush_count = flush_count + 1;
+            if (dut.stall_haz) stall_count = stall_count + 1;
+            if (dut.branch_mispredict_ex) flush_count = flush_count + 1;
         end
     end
 
@@ -149,10 +133,10 @@ module tb_top;
             #1;
             $display("%6d | %08h | 0x%08h | %5s | %5s | 0x%08h",
                 cycle_count,
-                dbg_pc,
-                dbg_instr_if,
-                dbg_stall ? "STALL" : "     ",
-                dbg_flush ? "FLUSH" : "     ",
+                dut.if_pc,
+                dut.if_instr,
+                dut.stall_haz ? "STALL" : "     ",
+                dut.branch_mispredict_ex ? "FLUSH" : "     ",
                 dmem[0]);
         end
 

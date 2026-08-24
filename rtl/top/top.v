@@ -7,15 +7,7 @@ module top (
     output wire [31:0] dmem_wdata,
     output wire        dmem_we,
     output wire [3:0]  dmem_be,
-    input  wire [31:0] dmem_rdata,
-    output wire [31:0] dbg_pc,
-    output wire [31:0] dbg_instr_if,
-    output wire [31:0] dbg_instr_id,
-    output wire [4:0]  dbg_rd_ex,
-    output wire [4:0]  dbg_rd_mem,
-    output wire [4:0]  dbg_rd_wb,
-    output wire        dbg_stall,
-    output wire        dbg_flush
+    input  wire [31:0] dmem_rdata
 );
 
     // Fetch wires
@@ -279,14 +271,4 @@ module top (
         .wb_data    (wb_data)
     );
     
-    // Debugging outputs
-    assign dbg_pc       = if_pc;
-    assign dbg_instr_if = if_instr;
-    assign dbg_instr_id = id_instr;
-    assign dbg_rd_ex    = ex_rd;
-    assign dbg_rd_mem   = mem_rd;
-    assign dbg_rd_wb    = wb_rd;
-    assign dbg_stall    = stall_haz;
-    assign dbg_flush    = branch_mispredict_ex;
-
 endmodule
