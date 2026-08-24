@@ -1,3 +1,3 @@
 # RV32I Pipelined Processor
 
-## Synthesized over a Zynq 7000
+## Synthesized over a Zybo Z7
