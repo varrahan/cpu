@@ -166,6 +166,8 @@ module tb_top;
         
         if (dmem[0] != 32'd55)
             $fatal(1, "Fibonacci: got %0d, expected 55", dmem[0]);
+        if (flush_count != 1)
+            $fatal(1, "Branch predictor: got %0d misses, expected 1", flush_count);
 
         rst_n = 0;
         for (i = 0; i < 256; i = i + 1) begin

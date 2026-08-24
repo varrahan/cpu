@@ -4,6 +4,7 @@ module decode_execute_register (
     input  wire        flush,
     input  wire        stall,
     input  wire [31:0] pc_in,
+    input  wire        pred_taken_in,
     input  wire [31:0] rs1_data_in,
     input  wire [31:0] rs2_data_in,
     input  wire [31:0] imm_in,
@@ -22,6 +23,7 @@ module decode_execute_register (
     input  wire        lui_in,
     input  wire        auipc_in,
     output reg  [31:0] pc_out,
+    output reg         pred_taken_out,
     output reg  [31:0] rs1_data_out,
     output reg  [31:0] rs2_data_out,
     output reg  [31:0] imm_out,
@@ -43,6 +45,7 @@ module decode_execute_register (
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             pc_out        <= 0;
+            pred_taken_out <= 0;
             rs1_data_out  <= 0;
             rs2_data_out  <= 0;
             imm_out       <= 0;
@@ -62,6 +65,7 @@ module decode_execute_register (
             auipc_out     <= 0;
         end else if (flush) begin
             pc_out        <= 0;
+            pred_taken_out <= 0;
             rs1_data_out  <= 0;
             rs2_data_out  <= 0;
             imm_out       <= 0;
@@ -81,6 +85,7 @@ module decode_execute_register (
             auipc_out     <= 0;
         end else if (!stall) begin
             pc_out        <= pc_in;
+            pred_taken_out <= pred_taken_in;
             rs1_data_out  <= rs1_data_in;
             rs2_data_out  <= rs2_data_in;
             imm_out       <= imm_in;

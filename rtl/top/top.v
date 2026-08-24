@@ -21,35 +21,42 @@ module top (
     // Fetch wires
     wire [31:0] if_pc, if_instr;
     wire        stall_if, flush_if;
+    wire        if_pred_taken;
     wire        branch_taken_ex;
     wire [31:0] branch_target_ex;
+    wire        branch_mispredict_ex;
+    wire [31:0] branch_recovery_pc_ex;
 
     fetch_stage u_fetch (
         .clk          (clk),
         .rst_n        (rst_n),
         .stall        (stall_if),
         .flush        (flush_if),
-        .branch_target(branch_target_ex),
-        .branch_taken (branch_taken_ex),
+        .redirect_pc  (branch_recovery_pc_ex),
         .pc_out       (if_pc),
         .instr_out    (if_instr),
         .imem_addr    (imem_addr),
-        .imem_data    (imem_data)
+        .imem_data    (imem_data),
+        .pred_taken   (if_pred_taken)
     );
 
     // Fetch to decode pipeline stage
     reg  [31:0] id_pc, id_instr;
+    reg         id_pred_taken;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            id_pc    <= 0;
-            id_instr <= 32'h0000_0013; // NOP
+            id_pc         <= 0;
+            id_instr      <= 32'h0000_0013; // NOP
+            id_pred_taken <= 0;
         end else if (flush_if) begin
-            id_pc    <= 0;
-            id_instr <= 32'h0000_0013; // NOP
+            id_pc         <= 0;
+            id_instr      <= 32'h0000_0013; // NOP
+            id_pred_taken <= 0;
         end else if (!stall_if) begin
-            id_pc    <= if_pc;
-            id_instr <= if_instr;
+            id_pc         <= if_pc;
+            id_instr      <= if_instr;
+            id_pred_taken <= if_pred_taken;
         end
     end
 
@@ -102,6 +109,7 @@ module top (
     wire [3:0]  ex_alu_op;
     wire        ex_alu_src, ex_mem_read, ex_mem_write, ex_reg_write;
     wire        ex_branch, ex_jal, ex_jalr, ex_lui, ex_auipc;
+    wire        ex_pred_taken;
     wire [2:0]  ex_funct3;
     
     wire [4:0]  mem_rd;
@@ -112,7 +120,7 @@ module top (
     wire        stall_haz, flush_id_ex_haz;
 
     assign stall_if = stall_haz;
-    assign flush_if = branch_taken_ex;
+    assign flush_if = branch_mispredict_ex;
 
     hazard_unit u_haz (
         .id_rs1      (id_rs1_addr),
@@ -126,9 +134,10 @@ module top (
     decode_execute_register u_id_ex (
         .clk          (clk),
         .rst_n        (rst_n),
-        .flush        (flush_id_ex_haz || branch_taken_ex),
+        .flush        (flush_id_ex_haz || branch_mispredict_ex),
         .stall        (1'b0),
         .pc_in        (id_pc),
+        .pred_taken_in (id_pred_taken),
         .rs1_data_in  (id_rs1_data),  .rs2_data_in  (id_rs2_data),  .imm_in       (id_imm),
         .rs1_addr_in  (id_rs1_addr),  .rs2_addr_in  (id_rs2_addr),  .rd_in        (id_rd),
         .alu_op_in    (id_alu_op),    .alu_src_in   (id_alu_src),   .mem_read_in  (id_mem_read),
@@ -137,6 +146,7 @@ module top (
         .lui_in       (id_lui),       .auipc_in     (id_auipc),
         
         .pc_out       (ex_pc),
+        .pred_taken_out(ex_pred_taken),
         .rs1_data_out (ex_rs1_data),  .rs2_data_out (ex_rs2_data),  .imm_out      (ex_imm),
         .rs1_addr_out (ex_rs1_addr),  .rs2_addr_out (ex_rs2_addr),  .rd_out       (ex_rd),
         .alu_op_out   (ex_alu_op),    .alu_src_out  (ex_alu_src),   .mem_read_out (ex_mem_read),
@@ -189,6 +199,10 @@ module top (
         .jalr   (ex_jalr),
         .taken  (branch_taken_ex)
     );
+
+    assign branch_mispredict_ex = (ex_branch || ex_jal || ex_jalr) &&
+                                  (ex_pred_taken != branch_taken_ex);
+    assign branch_recovery_pc_ex = branch_taken_ex ? branch_target_ex : ex_pc + 4;
     
     wire [31:0] ex_alu_result_final;
     assign ex_alu_result_final = (ex_jal || ex_jalr) ? (ex_pc + 4) : alu_result;
@@ -273,6 +287,6 @@ module top (
     assign dbg_rd_mem   = mem_rd;
     assign dbg_rd_wb    = wb_rd;
     assign dbg_stall    = stall_haz;
-    assign dbg_flush    = branch_taken_ex;
+    assign dbg_flush    = branch_mispredict_ex;
 
 endmodule
