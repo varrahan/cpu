@@ -19,7 +19,8 @@ STRESS_HEX = $(PROGRAM_DIR)/rv32gc_stress.hex
 	architecture-units architecture-check physical-preflight physical-release \
 	timing-check timing-explore timing-signoff formal formal-compile check \
 	release-check extended-units fpu-check pmp-check sv32-check debug-check \
-	photonic-macros known-state-check stress-image
+	photonic-macros known-state-check stress-image architecture-cert \
+	lint-check cdc-check jtag-debug-check rvfi-diff softfloat-check boot-check
 
 FETCH_SRC = rtl/fetch/rvc_decompressor.v \
             rtl/fetch/fetch_stage.v
@@ -48,7 +49,8 @@ MEM_SRC = rtl/memory/memory_stage.v \
 
 WB_SRC = rtl/writeback/writeback_stage.v
 
-DEBUG_SRC = rtl/debug/debug_control.v
+DEBUG_SRC = rtl/debug/debug_control.v \
+	rtl/debug/riscv_debug_transport.sv
 
 TOP_SRC = rtl/top/top.v
 
@@ -212,3 +214,147 @@ clean:
 	rm -f $(OUT) $(WAVE)
 
 	@echo "Clean complete."
+
+ACT4_DIR = build/act4
+ACT4_SRC = $(ACT4_DIR)/source
+ACT4_REV = 1cb285fe70ecc375422d2a72b7b5183a9f0ea771
+ACT4_IMAGE = ghcr.io/riscv/act4-build:act4@sha256:6c1967e40bb17ef23b9a175529882128dd04d76990f13fafa7c9756bac761a77
+ACT4_WORK = work/photonic
+ACT4_CONFIG_DIR = $(ACT4_SRC)/config/photonic-rv32gc
+ACT4_CONFIG = config/photonic-rv32gc/test_config.yaml
+ACT4_EXTENSIONS = I,M,F,D,Zicsr,Zifencei,Zca,Zcf,Zcd,Zaamo,Zalrsc
+ACT4_ELFS = $(ACT4_SRC)/$(ACT4_WORK)/photonic-rv32gc/elfs/rv32i
+ACT4_HEX = $(ACT4_DIR)/hex-rv32gc
+ACT4_JOBS ?= 8
+ACT4_VERILATOR_DIR = build/verilator/act4
+ACT4_BIN = $(ACT4_VERILATOR_DIR)/Vtb_act4
+SOFTFLOAT_REV = a0c6494cdc11865811dec815d5c0049fba9d82a8
+SOFTFLOAT_SRC = build/softfloat/source
+SOFTFLOAT_BUILD = $(SOFTFLOAT_SRC)/build/Linux-x86_64-GCC
+BOOT_ELF = $(PROGRAM_DIR)/architecture_boot.elf
+BOOT_HEX = $(PROGRAM_DIR)/architecture_boot.hex
+
+.PHONY: act4-source act4-config act4-elfs act4-compile act4-hex \
+	act4-official softfloat-source softfloat-check boot-image boot-check \
+	rvfi-diff lint-check cdc-check jtag-debug-check architecture-cert
+
+act4-source:
+	@if [ ! -d $(ACT4_SRC)/.git ]; then \
+		mkdir -p $(ACT4_SRC); \
+		git -C $(ACT4_SRC) init; \
+		git -C $(ACT4_SRC) remote add origin https://github.com/riscv/riscv-arch-test.git; \
+		git -C $(ACT4_SRC) fetch --depth 1 origin $(ACT4_REV); \
+		git -C $(ACT4_SRC) checkout --detach FETCH_HEAD; \
+	fi
+	@test "$$(git -C $(ACT4_SRC) rev-parse HEAD)" = "$(ACT4_REV)"
+
+act4-config: act4-source
+	mkdir -p $(ACT4_CONFIG_DIR)
+	cp sim/act4/test_config.yaml sim/act4/photonic-rv32gc.yaml $(ACT4_CONFIG_DIR)/
+	ln -sfn ../sail/sail-rv32-max/link.ld $(ACT4_CONFIG_DIR)/link.ld
+	ln -sfn ../sail/sail-rv32-max/rvmodel_macros.h $(ACT4_CONFIG_DIR)/rvmodel_macros.h
+	ln -sfn ../sail/sail-rv32-max/sail.json $(ACT4_CONFIG_DIR)/sail.json
+
+act4-elfs: act4-config
+	docker run --rm -v $(abspath $(ACT4_SRC)):/act4 -w /act4 \
+		$(ACT4_IMAGE) make CONFIG_FILES=$(ACT4_CONFIG) \
+		WORKDIR=$(ACT4_WORK) EXTENSIONS=$(ACT4_EXTENSIONS) FAST=True -j8
+
+act4-compile:
+	mkdir -p $(ACT4_VERILATOR_DIR)
+	verilator $(VERILATOR_FLAGS) -DRISCV_FORMAL --top-module tb_act4 \
+		-Mdir $(ACT4_VERILATOR_DIR) $(COMMON_CELLS_SRC) $(FPNEW_SRC) \
+		$(RTL_SRC) sim/tb_act4.sv
+
+act4-hex: act4-elfs
+	mkdir -p $(ACT4_HEX)
+	docker run --rm -v $(abspath $(ACT4_SRC)):/act4:ro \
+		-v $(abspath $(ACT4_HEX)):/hex $(ACT4_IMAGE) sh -c \
+		'find /act4/$(ACT4_WORK)/photonic-rv32gc/elfs/rv32i -name "*.elf" | while read elf; do \
+			ext=$$(basename "$$(dirname "$$elf")"); name=$$(basename "$$elf" .elf); \
+			mkdir -p "/hex/$$ext"; \
+		riscv64-unknown-elf-objcopy -O verilog --verilog-data-width=1 \
+			"$$elf" "/hex/$$ext/$$name.hex"; \
+		riscv64-unknown-elf-nm "$$elf" | grep " tohost$$" | cut -d" " -f1 \
+			> "/hex/$$ext/$$name.tohost"; \
+		sed -i "s/^@8/@0/" "/hex/$$ext/$$name.hex"; \
+		done'
+
+act4-official: act4-compile act4-hex
+	@mkdir -p $(ACT4_DIR)/logs; \
+	find $(ACT4_HEX) -name '*.hex' -print0 | sort -z | \
+		xargs -0 -n1 -P$(ACT4_JOBS) sh -c ' \
+			hex="$$1"; name=$${hex##*/}; name=$${name%.hex}; \
+			tohost=$$(cat "$${hex%.hex}.tohost"); \
+			log="$(ACT4_DIR)/logs/$${hex#$(ACT4_HEX)/}"; log=$${log%.hex}.log; \
+			mkdir -p "$${log%/*}"; \
+			if $(ACT4_BIN) +hex="$$hex" +test="$$name" +tohost="$$tohost" +reset_high +timeout=5000000 >"$$log" 2>&1; then \
+				echo "PASS $$name"; \
+			else \
+				echo "FAIL $$name ($$log)"; exit 1; \
+			fi' _ >$(ACT4_DIR)/official-results.log; \
+	status=$$?; cat $(ACT4_DIR)/official-results.log; \
+	total=$$(wc -l <$(ACT4_DIR)/official-results.log); \
+	passed=$$(grep -c '^PASS ' $(ACT4_DIR)/official-results.log || true); \
+	echo "ACT4 supported ISA: $$passed/$$total passed"; \
+	exit $$status
+
+softfloat-source:
+	@if [ ! -d $(SOFTFLOAT_SRC)/.git ]; then \
+		git clone --filter=blob:none https://github.com/ucb-bar/berkeley-softfloat-3.git $(SOFTFLOAT_SRC); \
+		git -C $(SOFTFLOAT_SRC) checkout --detach $(SOFTFLOAT_REV); \
+	fi
+	@test "$$(git -C $(SOFTFLOAT_SRC) rev-parse HEAD)" = "$(SOFTFLOAT_REV)"
+
+softfloat-check: softfloat-source
+	$(MAKE) -C $(SOFTFLOAT_BUILD) -j8
+	mkdir -p build/verilator/softfloat
+	verilator $(VERILATOR_FLAGS) --top-module tb_fpu_random \
+		-Mdir build/verilator/softfloat $(COMMON_CELLS_SRC) $(FPNEW_SRC) \
+		rtl/execute/fpu_wrapper.sv sim/tb_fpu_random.sv \
+		$(abspath sim/softfloat_dpi.c) \
+		-CFLAGS "-I$(abspath $(SOFTFLOAT_SRC)/source/include)" \
+		-LDFLAGS "$(abspath $(SOFTFLOAT_BUILD)/softfloat.a)"
+	build/verilator/softfloat/Vtb_fpu_random
+
+boot-image: act4-source
+	mkdir -p $(PROGRAM_DIR)
+	docker run --rm -v $(abspath .):/cpu -w /cpu $(ACT4_IMAGE) sh -c \
+		'riscv64-unknown-elf-gcc -march=rv32gc -mabi=ilp32d -mcmodel=medany \
+			-nostdlib -nostartfiles -T sim/programs/architecture_boot.ld \
+			-o $(BOOT_ELF) sim/programs/architecture_boot.S && \
+		riscv64-unknown-elf-objcopy -O verilog --verilog-data-width=1 \
+			$(BOOT_ELF) $(BOOT_HEX)'
+
+boot-check: act4-compile boot-image
+	$(ACT4_BIN) +hex=$(BOOT_HEX) +test=machine-to-sv32-boot +timeout=1000000
+
+rvfi-diff: act4-compile act4-hex
+	mkdir -p build/rvfi
+	$(ACT4_BIN) +hex=$(ACT4_HEX)/I/I-add-00.hex +test=rvfi-I-add \
+		+tohost=$$(cat $(ACT4_HEX)/I/I-add-00.tohost) +reset_high \
+		+rvfi=build/rvfi/dut.log +timeout=5000000
+	docker run --rm -v $(abspath $(ACT4_SRC)):/act4 -w /act4 $(ACT4_IMAGE) \
+		sail_riscv_sim --config config/photonic-rv32gc/sail.json \
+		--trace-instr --trace-gpr --trace-output work/photonic/rvfi-sail.log \
+		work/photonic/photonic-rv32gc/elfs/rv32i/I/I-add-00.elf
+	python3 sim/compare_rvfi.py build/rvfi/dut.log \
+		$(ACT4_SRC)/work/photonic/rvfi-sail.log
+
+lint-check:
+	verilator --lint-only --timing -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -Wno-ASCRANGE \
+		-Wno-UNSIGNED -Ithird_party/common_cells/include \
+		$(COMMON_CELLS_SRC) $(FPNEW_SRC) $(RTL_SRC) rtl/top/top_jtag.sv
+
+cdc-check:
+	python3 sim/check_cdc.py
+
+jtag-debug-check:
+	mkdir -p $(ARCH_DIR)
+	iverilog -g2012 -s tb_jtag_debug -o $(ARCH_DIR)/jtag_debug.vvp \
+		rtl/debug/riscv_debug_transport.sv sim/tb_jtag_debug.sv
+	vvp $(ARCH_DIR)/jtag_debug.vvp
+
+architecture-cert: architecture-check lint-check cdc-check jtag-debug-check \
+	act4-official rvfi-diff softfloat-check boot-check
