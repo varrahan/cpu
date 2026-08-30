@@ -1,54 +1,48 @@
 module memory_stage (
-    input  wire [31:0] addr,
+    input  wire [1:0]  addr,
     input  wire [31:0] wdata,
-    input  wire        mem_read,
-    input  wire        mem_write,
     input  wire [2:0]  funct3,
-    output wire [31:0] dmem_addr,
-    output reg  [31:0] dmem_wdata,
-    output wire        dmem_we,
-    output reg  [3:0]  dmem_be,    
-    input  wire [31:0] dmem_rdata,
-    output reg  [31:0] rdata
+    input  wire [31:0] word_rdata,
+    output reg  [31:0] store_wdata,
+    output reg  [3:0]  store_be,
+    output reg  [31:0] load_rdata,
+    output reg         misaligned
 );
-    wire [31:0] aligned_rdata = dmem_rdata >> (addr[1:0] * 8);
-
-    assign dmem_addr  = addr;
-    assign dmem_we    = mem_write;
+    reg [15:0] shifted;
 
     always @(*) begin
-        dmem_wdata = wdata;
-        dmem_be    = 4'b0000;
-        if (mem_write) begin
-            case (funct3)
-                3'b000: begin 
-                    dmem_be    = 4'b0001 << addr[1:0];
-                    dmem_wdata = {4{wdata[7:0]}};
-                end
-                3'b001: begin 
-                    dmem_be    = 4'b0011 << {addr[1], 1'b0};
-                    dmem_wdata = {2{wdata[15:0]}};
-                end
-                3'b010: begin 
-                    dmem_be    = 4'b1111;
-                    dmem_wdata = wdata;
-                end
-                default: dmem_be = 4'b1111;
-            endcase
-        end
-    end
+        store_wdata = 0;
+        store_be = 0;
+        load_rdata = 0;
+        misaligned = 0;
+        shifted = word_rdata >> ({30'b0, addr} * 8);
 
-    always @(*) begin
-        rdata = 32'b0;
-        if (mem_read) begin
-            case (funct3)
-                3'b000: rdata = {{24{aligned_rdata[7]}},  aligned_rdata[7:0]};
-                3'b001: rdata = {{16{aligned_rdata[15]}}, aligned_rdata[15:0]};
-                3'b010: rdata = dmem_rdata;
-                3'b100: rdata = {24'b0, aligned_rdata[7:0]};
-                3'b101: rdata = {16'b0, aligned_rdata[15:0]};
-                default: rdata = dmem_rdata;
-            endcase
-        end
+        case (funct3)
+            3'b000: begin
+                store_be = 4'b0001 << addr;
+                store_wdata = {24'b0, wdata[7:0]} <<
+                              ({30'b0, addr} * 8);
+                load_rdata = {{24{shifted[7]}}, shifted[7:0]};
+            end
+            3'b001: begin
+                misaligned = addr[0];
+                store_be = 4'b0011 << {addr[1], 1'b0};
+                store_wdata = {16'b0, wdata[15:0]} <<
+                              ({30'b0, addr} * 8);
+                load_rdata = {{16{shifted[15]}}, shifted[15:0]};
+            end
+            3'b010: begin
+                misaligned = |addr;
+                store_be = 4'b1111;
+                store_wdata = wdata;
+                load_rdata = word_rdata;
+            end
+            3'b100: load_rdata = {24'b0, shifted[7:0]};
+            3'b101: begin
+                misaligned = addr[0];
+                load_rdata = {16'b0, shifted[15:0]};
+            end
+            default: misaligned = 1;
+        endcase
     end
 endmodule
