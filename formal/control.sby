@@ -1,0 +1,15 @@
+[options]
+mode prove
+depth 1
+
+[engines]
+smtbmc z3
+
+[script]
+read -formal hazard_unit.v branch_unit.v control_harness.sv
+prep -top control_harness
+
+[files]
+rtl/execute/hazard_unit.v
+rtl/execute/branch_unit.v
+formal/control_harness.sv
