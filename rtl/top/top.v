@@ -551,7 +551,7 @@ module top (
     always @(posedge clk) begin
         if (!rst_n)
             ex_operands_latched <= 0;
-        else if (execute_hold && !ex_operands_latched)
+        else if ((mem_hold || execute_hold) && !ex_operands_latched)
             ex_operands_latched <= 1;
         else if (!mem_hold && !execute_hold)
             ex_operands_latched <= 0;
@@ -566,7 +566,7 @@ module top (
             ex_frs1_data <= 0;
             ex_frs2_data <= 0;
             ex_frs3_data <= 0;
-        end else if (execute_hold && !ex_operands_latched) begin
+        end else if ((mem_hold || execute_hold) && !ex_operands_latched) begin
             ex_rs1_data <= fwd_rs1;
             ex_rs2_data <= fwd_rs2;
             ex_frs1_data <= fwd_frs1;

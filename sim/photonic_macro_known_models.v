@@ -3,25 +3,17 @@
 module P_PC32 (
     input wire clk, input wire rst_n, input wire stall, input wire flush,
     input wire [31:0] redirect_pc, input wire [2:0] instr_length,
-    output reg [31:0] pc, output reg issue_window
+    output reg [31:0] pc, output wire issue_window
 );
-    reg [2:0] accepted_length;
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (!rst_n)
             pc <= 0;
-            issue_window <= 1;
-            accepted_length <= 4;
-        end else if (flush) begin
+        else if (flush)
             pc <= redirect_pc;
-            issue_window <= 1;
-        end else if (!issue_window) begin
-            pc <= pc + accepted_length;
-            issue_window <= 1;
-        end else if (!stall) begin
-            accepted_length <= instr_length;
-            issue_window <= 0;
-        end
+        else if (!stall)
+            pc <= pc + instr_length;
     end
+    assign issue_window = 1'b1;
 endmodule
 
 module P_PMP32 (
