@@ -8,26 +8,16 @@ module P_PC32 (
 );
 `ifndef SYNTHESIS
     reg [31:0] pc_state;
-    reg advance_pending;
-    reg [2:0] accepted_length;
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (!rst_n)
             pc_state <= 0;
-            advance_pending <= 0;
-            accepted_length <= 4;
-        end else if (flush) begin
+        else if (flush)
             pc_state <= redirect_pc;
-            advance_pending <= 0;
-        end else if (advance_pending) begin
-            pc_state <= pc_state + accepted_length;
-            advance_pending <= 0;
-        end else if (!stall) begin
-            accepted_length <= instr_length;
-            advance_pending <= 1;
-        end
+        else if (!stall)
+            pc_state <= pc_state + instr_length;
     end
     assign pc = pc_state;
-    assign issue_window = !advance_pending;
+    assign issue_window = 1'b1;
 `endif
 endmodule
 
