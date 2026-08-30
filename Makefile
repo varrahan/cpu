@@ -28,26 +28,21 @@ FETCH_SRC = rtl/fetch/rvc_decompressor.v \
 DECODE_SRC = rtl/decode/decoder.v \
              rtl/decode/regfile.v \
              rtl/decode/fp_regfile.v \
-             rtl/decode/csr_file.v \
-             rtl/decode/decode_execute_register.v
+             rtl/decode/csr_file.v
 
 EXEC_SRC = rtl/execute/alu.v \
            rtl/execute/branch_unit.v \
            rtl/execute/forwarding_unit.v \
            rtl/execute/hazard_unit.v \
            rtl/execute/muldiv_unit.v \
-           rtl/execute/fpu_wrapper.sv \
-           rtl/execute/execute_memory_register.v
+           rtl/execute/fpu_wrapper.sv
 
 MEM_SRC = rtl/memory/memory_stage.v \
           rtl/memory/pmp_checker.v \
           rtl/memory/sv32_mmu.v \
           rtl/memory/memory_arbiter4.v \
           rtl/memory/icache.v \
-          rtl/memory/dcache.v \
-          rtl/memory/memory_writeback_register.v
-
-WB_SRC = rtl/writeback/writeback_stage.v
+          rtl/memory/dcache.v
 
 DEBUG_SRC = rtl/debug/debug_control.v \
 	rtl/debug/riscv_debug_transport.sv
@@ -55,7 +50,7 @@ DEBUG_SRC = rtl/debug/debug_control.v \
 TOP_SRC = rtl/top/top.v
 
 RTL_SRC = rtl/photonic/photonic_memories.v \
-	$(FETCH_SRC) $(DECODE_SRC) $(EXEC_SRC) $(MEM_SRC) $(WB_SRC) \
+	$(FETCH_SRC) $(DECODE_SRC) $(EXEC_SRC) $(MEM_SRC) \
 	$(DEBUG_SRC) $(TOP_SRC)
 
 TB_SRC = sim/tb_top.v
@@ -70,12 +65,9 @@ FPNEW_SRC = third_party/cvfpu/src/fpnew_pkg.sv \
 	third_party/cvfpu/src/fpnew_classifier.sv \
 	third_party/cvfpu/src/fpnew_rounding.sv \
 	third_party/cvfpu/src/fpnew_fma.sv \
-	third_party/cvfpu/src/fpnew_fma_multi.sv \
 	third_party/cvfpu/src/fpnew_noncomp.sv \
 	third_party/cvfpu/src/fpnew_cast_multi.sv \
-	third_party/cvfpu/src/fpnew_divsqrt_th_32.sv \
 	third_party/cvfpu/src/fpnew_divsqrt_th_64_multi.sv \
-	third_party/cvfpu/src/fpnew_divsqrt_multi.sv \
 	third_party/cvfpu/src/fpnew_opgroup_fmt_slice.sv \
 	third_party/cvfpu/src/fpnew_opgroup_multifmt_slice.sv \
 	third_party/cvfpu/src/fpnew_opgroup_block.sv \
@@ -342,9 +334,10 @@ rvfi-diff: act4-compile act4-hex
 		$(ACT4_SRC)/work/photonic/rvfi-sail.log
 
 lint-check:
-	verilator --lint-only --timing -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+	verilator --lint-only --timing --top-module top_jtag \
+		-Wall -Wno-fatal -Wno-TIMESCALEMOD \
 		-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -Wno-ASCRANGE \
-		-Wno-UNSIGNED -Ithird_party/common_cells/include \
+		-Wno-UNSIGNED -Ithird_party/common_cells/include rtl/lint.vlt \
 		$(COMMON_CELLS_SRC) $(FPNEW_SRC) $(RTL_SRC) rtl/top/top_jtag.sv
 
 cdc-check:
