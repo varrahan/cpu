@@ -1,0 +1,22 @@
+{
+  "status": "preliminary; blocked until vendor PDK placement",
+  "units": "um",
+  "interposer": {
+    "platform": "low-loss SiN",
+    "gds": "build/gds/interposer.gds"
+  },
+  "chiplets": [
+    {"name": "if_icache", "platform": "TFLN logic/state + InP gain", "x": null, "y": null, "gds": "build/gds/if_icache.gds"},
+    {"name": "id_regfile_csr", "platform": "TFLN logic/state + InP gain", "x": null, "y": null, "gds": "build/gds/id_regfile_csr.gds"},
+    {"name": "execute", "platform": "TFLN logic/state + InP gain", "x": null, "y": null, "gds": "build/gds/execute.gds"},
+    {"name": "mem_dcache", "platform": "TFLN logic/state + InP gain", "x": null, "y": null, "gds": "build/gds/mem_dcache.gds"},
+    {"name": "writeback", "platform": "TFLN logic/state + InP gain", "x": null, "y": null, "gds": "build/gds/writeback.gds"}
+  ],
+  "interfaces": {
+    "coupling": "butt-coupled spot-size converters",
+    "maximum_lateral_error_um": null,
+    "maximum_angular_error_deg": null,
+    "calibration_channels": ["chi2_phase_bias", "cavity_delay_trim", "gain_bias", "clock_delay_trim"]
+  },
+  "wavelength_plan": "photonic/wavelengths.json"
+}
