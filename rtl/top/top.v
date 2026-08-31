@@ -94,6 +94,7 @@ module top (
     wire dmmu_hold;
     wire stall_haz;
     wire stall_fp_haz;
+    wire stall_csr;
     wire [1:0] csr_privilege;
     wire [1:0] csr_data_privilege;
     wire [31:0] csr_pmpcfg0, csr_pmpaddr0, csr_pmpaddr1;
@@ -183,7 +184,8 @@ module top (
         (instruction_translation_fault || instruction_pmp_fault ||
          icache_ready);
     wire stall_fetch = debug_halted || wfi_sleep || mem_hold || execute_hold ||
-                       stall_haz || stall_fp_haz || !if_fetch_ready;
+                       stall_haz || stall_fp_haz || stall_csr ||
+                       !if_fetch_ready;
     wire im0_req_valid, im0_req_ready, im0_req_write, im0_req_amo;
     wire [31:0] im0_req_addr, im0_req_wdata, im0_rsp_rdata;
     wire [3:0] im0_req_be; wire [4:0] im0_req_amo_op;
@@ -308,8 +310,8 @@ module top (
             id_valid <= 0;
         end else if (debug_halted || wfi_sleep) begin
             id_valid <= 0;
-        end else if (mem_hold || execute_hold || stall_haz ||
-                     stall_fp_haz) begin
+        end else if (mem_hold || execute_hold || stall_haz || stall_fp_haz ||
+                     stall_csr) begin
             // Hold the instruction feeding a blocked decode stage.
         end else begin
             id_valid <= if_fetch_ready;
@@ -326,7 +328,7 @@ module top (
             id_fetch_cause <= 0;
             id_fetch_tval <= 0;
         end else if (!debug_halted && !wfi_sleep && !mem_hold && !execute_hold &&
-            !stall_haz && !stall_fp_haz) begin
+            !stall_haz && !stall_fp_haz && !stall_csr) begin
             id_pc <= if_pc;
             id_encoded_instr <= if_raw_instr;
             id_instr_length <= if_instr_length;
@@ -525,6 +527,8 @@ module top (
                            ((id_fp_uses_rs1 && id_instr[19:15] == ex_rd) ||
                             (id_fp_uses_rs2 && id_instr[24:20] == ex_rd) ||
                             (id_fp_uses_rs3 && id_instr[31:27] == ex_rd));
+    assign stall_csr = (ex_valid && ex_csr_en) ||
+                       (mem_valid && mem_csr_en);
 
     always @(posedge clk or posedge ex_async_reset) begin
         if (ex_async_reset) begin
@@ -537,7 +541,7 @@ module top (
             ex_valid <= 0;
             ex_exception <= 0;
         end else if (mem_hold || execute_hold) begin
-        end else if (flush_id_ex_haz || stall_fp_haz) begin
+        end else if (flush_id_ex_haz || stall_fp_haz || stall_csr) begin
             ex_valid <= 0;
             ex_exception <= 0;
         end else begin

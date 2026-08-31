@@ -17,6 +17,7 @@ the release gate can pass. See [the implementation plan](docs/photonic_cpu_plan.
 make run                 # RTL regression (run `make compile` first)
 make stress-image        # build/audit the compiler-produced RV32GC workload
 make architecture-check  # extended ISA/CSR tests, formal control, RVFI build
+make architecture-cert   # ACT4, Sail/RVFI, SoftFloat, lint, CDC, JTAG, boot
 make photonic-cells      # logical photonic primitive checks
 make photonic-check      # regress the mapped chi2/time-bin cell netlist
 make known-state-check   # reject mapped X/Z, floating, or multiply driven nets
@@ -43,7 +44,10 @@ currently confirms 117 required mnemonics and 160 emitted compressed
 instructions before the testbench checks its integer, atomic, CSR, and
 floating-point signatures.
 
-The optimized map uses 16,253 photonic LUT3s, 3,382 soft state cells, and six
+`make check` and `make architecture-cert` pass. ACT4 passes all 281 supported
+ISA tests, including the F/D suites.
+
+The optimized map uses 16,273 photonic LUT3s, 3,397 soft state cells, and six
 parameterized photonic memory macros. Register files and cache tag/data banks
 are inferred as memory IP instead of LUT read muxes; `physical/netlist_contract.py`
 enforces the memory shapes, single-driver connectivity, and a 17,000-LUT
@@ -63,9 +67,9 @@ PIC signoff.
 
 Current clock results are recorded in
 [the architecture/signoff report](docs/architecture_signoff.md). The complete
-mapped research backend closes the mandatory 100 GHz contract with 0.800 ps
-data slack and 1.005 ps predicate-reset slack; its estimated model Fmax is
-110.39 GHz. The exploratory 120 GHz point fails. This is an architecture-model
+mapped research backend closes the mandatory 100 GHz contract with 0.680 ps
+data slack and 0.615 ps predicate-reset slack; its estimated model Fmax is
+107.80 GHz. The exploratory 120 GHz point fails. This is an architecture-model
 result, not tapeout signoff: `make timing-signoff` and `make release-check`
 remain blocked until a vendor characterizes the target cells and extracted
 layout satisfies the same limits.

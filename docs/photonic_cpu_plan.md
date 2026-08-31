@@ -149,15 +149,16 @@ wave-pipeline boundaries while preserving architectural behavior.
 - [x] Logical photonic-cell mapping and mapped regression implemented.
 - [x] Loss-aware mandatory 100 GHz complete-netlist research timing closes.
 - [x] Physical manifest/preflight release gate implemented.
+- [x] Full ACT4 F/D conformance restored; all 281 supported tests pass.
 - [ ] Vendor-PDK splitter/regenerator placement and GDS generation complete.
 - [ ] External ISA/OS/debug compliance and physical signoff complete.
 
-The open functional regressions cover RV32GC integer, atomic, compressed, and
+The functional regressions cover RV32GC integer, atomic, compressed, and
 floating-point execution; M/S/U traps, delegation, interrupts, PMP, Sv32,
 debug control; cache operation, memory backpressure, and access errors. Final
-certification and physical signoff remain blocked by the external suites and
-vendor assets listed above; the generated preflight report records every
-missing physical release input.
+external certification and physical signoff remain blocked by the vendor
+assets listed above; the generated preflight report records every missing
+physical release input.
 
 Preliminary structural timing rejected the mandatory 100 GHz CPU clock for the
 former SOA/ring backend. The replacement `P_CHI2_LUT3`/`P_TBIN_DFF` research
@@ -170,4 +171,4 @@ The target rates are requirements, not claimed measurements of the abstract
 LUT3 and state macros. They are motivated by demonstrated near-instantaneous
 chi2 nonlinear processing and published TFLN nonlinear functions with allowable
 clock rates above 13 THz, but each synthesized macro still requires foundry
-implementation and characterization: [All-optical computing towards 100GHz clock rates](https://www.nature.com/articles/s41377-026-02314-5)
+implementation and characterization: [All-optical computing towards 100-GHz clock rates](https://www.nature.com/articles/s41377-026-02314-5)

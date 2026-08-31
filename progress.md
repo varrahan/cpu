@@ -1,39 +1,37 @@
 # Project Progress
 
-The lint cleanup from the previous audit is complete. The open RTL flow still
-works; production release remains blocked.
+The baseline RTL, architecture-conformance, and research timing gates pass.
+Production release remains blocked.
 
 Current verification:
 
 - `make check`: passes.
-- `make architecture-cert`: passes; ACT4 remains 281/281.
+- `make architecture-cert`: passes; ACT4 is 281/281, Sail/RVFI matches 4,361
+  retirements, SoftFloat passes 4,000 cases, and Sv32 boot passes.
+- `make timing-check`: passes the 100 GHz research model.
 - `make timing-signoff`: fails because models are not vendor-characterized.
 - Physical preflight: 27 blockers.
-- Working tree: 9 modified, 1 deleted, 51 untracked files.
 - Lint: passes with zero warnings; local issues were fixed and imported-IP
   warnings are explicitly scoped in `rtl/lint.vlt`.
+- Known-state check: 81,955 mapped signals remain binary after reset.
 
-A new finding: regenerated timing is deterministic but no longer matches
-`docs/architecture_signoff.md`.
+Current regenerated backend:
 
-| Metric | Documented | Current |
-| --- | ---: | ---: |
-| LUT3s | 16,253 | 16,209 |
-| Soft state cells | 3,382 | 3,397 |
-| Data-path levels | 48 | 57 |
-| Reset-path levels | 51 | 56 |
-| Estimated Fmax | 110.39 GHz | 107.59 GHz |
-| Data slack | 0.800 ps | 0.665 ps |
-| Reset slack | 1.005 ps | 0.600 ps |
+| Metric | Current |
+| --- | ---: |
+| LUT3s | 16,273 |
+| Soft state cells | 3,397 |
+| Data-path levels | 55 |
+| Reset-path levels | 54 |
+| Estimated Fmax | 107.80 GHz |
+| 100 GHz data slack | 0.680 ps |
+| 100 GHz reset slack | 0.615 ps |
 
 ## Repository-owned work
 
-- [ ] Review and commit the entire current implementation.
-- [ ] Confirm and stage deletion of `constraints/constraint.xdc`.
-- [ ] Remove obsolete tracked simulation artifacts and make `make clean` clean
-      the real build outputs.
-- [ ] Investigate the changed timing/map results, then regenerate `README.md`
-      and the signoff report from the final netlist.
+- [x] Restore full ACT4 F/D conformance with the CSR pipeline interlock.
+- [ ] Make `make clean` remove the real build outputs.
+- [x] Regenerate `README.md` and the signoff report from the current netlist.
 - [ ] Make `architecture-cert` depend on `check`; currently it omits photonic,
       known-state, preflight, and timing checks.
 - [ ] Make `release-check` depend on `architecture-cert`; currently release can
@@ -42,7 +40,7 @@ A new finding: regenerated timing is deterministic but no longer matches
 - [ ] Require all retained physical support cells in preflight, not only the
       eight logical mapped types.
 - [ ] Require actual splitter/regenerator insertion. Preflight currently
-      estimates 31,918 splitters and reports `inserted_regenerators: null`.
+      estimates 31,986 splitters and reports `inserted_regenerators: null`.
 - [ ] Integrate `constraints/photonic.sdc` into the timing flow and replace its
       zero interface-delay placeholders.
 - [x] Resolve or explicitly waive lint warnings; core-side reset handling is

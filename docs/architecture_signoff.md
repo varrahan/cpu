@@ -6,18 +6,20 @@
 the baseline checks, end-to-end and directed architecture regressions, formal
 control proof, whole-design lint, structural CDC policy, JTAG debug transport,
 official ACT4 tests, Sail/RVFI differential retirement, randomized SoftFloat
-comparison, and machine-to-supervisor Sv32 boot.
+comparison, and machine-to-supervisor Sv32 boot. The complete gate currently
+passes.
 
 | Gate | Result |
 | --- | --- |
 | Baseline `make check` and `make architecture-check` | Pass |
+| Whole-design lint | Pass with zero warnings |
+| Interrupt, JTAG DMI, and reset structural CDC policy | Pass |
+| RISC-V Debug 1.0 JTAG DTM/minimal DM regression | Pass |
 | ACT4 supported ISA | 281/281 pass |
 | Sail/RVFI differential | 4,361 retirements match |
 | Berkeley SoftFloat randomized comparison | 4,000 cases pass |
-| Machine-to-supervisor Sv32 boot | Pass in 11,671 cycles |
-| RISC-V Debug 1.0 JTAG DTM/minimal DM regression | Pass |
-| Interrupt, JTAG DMI, and reset structural CDC policy | Pass |
-| Whole-design Verilator lint | Pass with non-fatal warnings |
+| Machine-to-supervisor Sv32 boot | Pass in 9,538 cycles |
+| `make architecture-cert` | Pass |
 
 The ACT4 configuration is CPU-owned in
 `sim/act4/photonic-rv32gc.yaml` and covers `I`, `M`, `F`, `D`, `Zicsr`,
@@ -26,6 +28,10 @@ commit `1cb285fe70ecc375422d2a72b7b5183a9f0ea771` and container digest
 `sha256:6c1967e40bb17ef23b9a175529882128dd04d76990f13fafa7c9756bac761a77`.
 Berkeley SoftFloat is pinned at commit
 `a0c6494cdc11865811dec815d5c0049fba9d82a8`.
+
+The core interlocks decode while a CSR instruction is in EX/MEM, ensuring
+updates such as `mstatus.FS`, `frm`, and `fflags` commit before a following
+floating-point or CSR instruction executes.
 
 Coverage includes the implemented `RV32GC`/`ILP32D` instruction set, integer
 and floating-point state, LR/SC and AMOs, precise traps, M/S/U privilege,
@@ -64,37 +70,39 @@ macros removed the remaining storage read-mux trees.
 
 | Mapped resource | Before | Optimized | Change |
 | --- | ---: | ---: | ---: |
-| `P_CHI2_LUT3` | 55,162 | 16,253 | -70.5% |
-| Soft state cells | 11,381 | 3,382 | -70.3% |
+| `P_CHI2_LUT3` | 55,162 | 16,273 | -70.5% |
+| Soft state cells | 11,381 | 3,397 | -70.2% |
 | Photonic memory macros | 0 | 6 | +6 |
 
 | Measurement | Result |
 | --- | ---: |
-| Longest structural data path | 48 LUT/memory/regenerator levels |
-| Longest structural predicate-reset path | 51 levels |
-| Worst data path including regeneration | 7.450 ps before setup/margins |
-| Worst predicate-reset path | 7.295 ps before recovery/margins |
-| Research-model estimated Fmax | 110.39 GHz |
-| 100 GHz data slack | +0.800 ps |
-| 100 GHz predicate-reset slack | +1.005 ps |
-| Exploratory 120 GHz data slack | -0.617 ps (fail) |
-| Standalone worst-path regenerators | 27 |
-| Clocked state cells and macros | 3,391 |
+| Longest structural data path | 55 LUT/memory/regenerator levels |
+| Longest structural predicate-reset path | 54 levels |
+| Worst data path including regeneration | 7.570 ps before setup/margins |
+| Worst predicate-reset path | 7.685 ps before recovery/margins |
+| Research-model estimated Fmax | 107.80 GHz |
+| 100 GHz data slack | +0.680 ps |
+| 100 GHz predicate-reset slack | +0.615 ps |
+| Exploratory 120 GHz data slack | -0.737 ps (fail) |
+| Required worst data/reset-path regenerators | 19 / 21 |
+| Clocked state cells and macros | 3,406 |
 | Balanced clock-tree depth | 12 splitter levels |
-| Splitters | 3,390 |
+| Clock-tree splitters | 3,405 |
 | Modeled regenerated clock-tree delay | 0.420 ps |
 
 These numbers are structural estimates and may include false paths; they are
 not extracted signoff. They establish that the complete mapped graph meets the
 100 GHz cell contract, not that a manufacturable PIC meets it.
 
-At 100 GHz the optimized clock tree and margins leave the 7.450 ps worst data
-path with 0.800 ps slack. Predicate-reset recovery independently closes with
-1.005 ps slack. The model limits unregenerated loss to 8 dB and inserts 27
-standalone regenerators on the worst data path.
+At 100 GHz the optimized clock tree and margins leave the 7.570 ps worst data
+path with 0.680 ps slack. Predicate-reset recovery independently closes with
+0.615 ps slack. The model limits unregenerated loss to 8 dB and requires 19
+regenerations on the worst data path and 21 on the worst predicate-reset path.
+These are timing-model requirements; physical preflight still reports that
+regenerators have not been inserted.
 
 `make known-state-check` complements the architectural tests with a four-state
-simulation of the mapped CPU. After deterministic reset, all 81,868 mapped
+simulation of the mapped CPU. After deterministic reset, all 81,955 mapped
 leaf-cell signals and external outputs are binary. The structural contract also
 rejects X/Z constants and undriven or multiply driven nets. This guarantee
 requires driven external inputs and completion of the documented reset edge;
