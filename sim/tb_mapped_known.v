@@ -29,7 +29,7 @@ module tb_mapped_known;
     reg [31:0] imem [0:8191];
     reg [31:0] dmem [0:8191];
     reg [31:0] max_imem_addr = 0;
-    integer index, lane;
+    integer index, lane, program_timeout;
 
     always #5 clk = ~clk;
 
@@ -124,7 +124,26 @@ module tb_mapped_known;
         if (max_imem_addr < 32'hc0)
             $fatal(1, "mapped stress did not progress: max_pc=%h",
                    max_imem_addr);
-        $display("PASS: mapped four-state stress reached %h", max_imem_addr);
+        $dumpoff;
+        program_timeout = 1024;
+        while (dmem[256] != 32'h600d_600d && program_timeout < 15000) begin
+            @(posedge clk);
+            program_timeout = program_timeout + 1;
+        end
+        if (dmem[256] != 32'h600d_600d ||
+            dmem[257] != 32'h8d94_4133 || dmem[258] != 32'h7f20_9540 ||
+            dmem[259] != 32'h25fc_f0ad || dmem[260] != 21 ||
+            dmem[261] != 8 || dmem[262] != 32'h4a ||
+            dmem[263] != 32'h126 || dmem[264] != 32'hc03d_3ad1 ||
+            dmem[265] != 32'h4170_0000 || dmem[266] != 32'h4080_0000 ||
+            dmem[268] != 0 || dmem[269] != 32'h402e_0000 ||
+            dmem[270] != 32'h5555_5555 || dmem[271] != 32'h3ff5_5555 ||
+            dmem[276] != 32'h4000_0000 || dmem[278] != 0 ||
+            dmem[279] != 32'h401c_0000 || dmem[280] != 32'h40 ||
+            dmem[281] != 32'haaaa_aabb || dmem[282] != 32'h0005_105e)
+            $fatal(1, "mapped RV32GC workload signature failure");
+        $display("PASS: mapped RV32GC signatures in %0d cycles",
+                 program_timeout);
         $finish;
     end
 endmodule

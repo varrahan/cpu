@@ -48,6 +48,7 @@ module tb_act4;
     reg [31:0] amo_write_value;
     reg [31:0] tohost_addr = 0;
     reg reset_high = 0;
+    reg irq_m_external = 0;
 
     assign imem_req_ready = !imem_rsp_valid;
     assign dmem_req_ready = !dmem_rsp_valid;
@@ -116,6 +117,7 @@ module tb_act4;
         if (!rst_n) begin
             dmem_rsp_valid <= 0;
             dmem_rsp_rdata <= 0;
+            irq_m_external <= 0;
         end else begin
             if (dmem_rsp_valid && dmem_rsp_ready)
                 dmem_rsp_valid <= 0;
@@ -125,6 +127,10 @@ module tb_act4;
 
                 if (dmem_req_addr == CONSOLE_ADDR && dmem_req_write) begin
                     $write("%c", dmem_req_wdata[7:0]);
+                end else if (dmem_req_addr == 32'h0c00_0004 &&
+                             dmem_req_write) begin
+                    if (dmem_req_wdata[11])
+                        irq_m_external <= dmem_req_wdata[31];
                 end else if (tohost_addr != 0 &&
                              (dmem_req_addr == tohost_addr ||
                               dmem_req_addr == memory_addr(tohost_addr)) &&
@@ -178,6 +184,11 @@ module tb_act4;
     wire [4:0] rvfi_rs1_addr, rvfi_rs2_addr, rvfi_rd_addr;
     wire [3:0] rvfi_mem_rmask, rvfi_mem_wmask;
     wire [1:0] rvfi_mode, rvfi_ixl;
+    wire rvfi_frd_valid, rvfi_csr_valid;
+    wire [4:0] rvfi_frd_addr;
+    wire [63:0] rvfi_frd_wdata;
+    wire [11:0] rvfi_csr_addr;
+    wire [31:0] rvfi_csr_wdata;
     reg [63:0] expected_order = 0;
 
     always @(posedge clk) begin
@@ -188,9 +199,14 @@ module tb_act4;
                        rvfi_order, expected_order);
             expected_order <= expected_order + 1;
             if (rvfi_fd)
-                $fdisplay(rvfi_fd, "%0d %0d %08x %08x %0d %0d %0d %08x",
+                $fdisplay(rvfi_fd,
+                          "%0d %0d %08x %08x %0d %0d %0d %08x %08x %01x %01x %08x %08x %0d %0d %016x %0d %03x %08x",
                           rvfi_order, rvfi_mode, rvfi_pc_rdata, rvfi_insn,
-                          rvfi_trap, rvfi_intr, rvfi_rd_addr, rvfi_rd_wdata);
+                          rvfi_trap, rvfi_intr, rvfi_rd_addr, rvfi_rd_wdata,
+                          rvfi_mem_addr, rvfi_mem_rmask, rvfi_mem_wmask,
+                          rvfi_mem_rdata, rvfi_mem_wdata,
+                          rvfi_frd_valid, rvfi_frd_addr, rvfi_frd_wdata,
+                          rvfi_csr_valid, rvfi_csr_addr, rvfi_csr_wdata);
         end
     end
 `endif
@@ -208,7 +224,7 @@ module tb_act4;
         .rst_n(rst_n),
         .irq_m_software(1'b0),
         .irq_m_timer(1'b0),
-        .irq_m_external(1'b0),
+        .irq_m_external(irq_m_external),
         .irq_s_software(1'b0),
         .irq_s_timer(1'b0),
         .irq_s_external(1'b0),
@@ -255,7 +271,11 @@ module tb_act4;
         .rvfi_pc_rdata(rvfi_pc_rdata), .rvfi_pc_wdata(rvfi_pc_wdata),
         .rvfi_mem_addr(rvfi_mem_addr), .rvfi_mem_rmask(rvfi_mem_rmask),
         .rvfi_mem_wmask(rvfi_mem_wmask), .rvfi_mem_rdata(rvfi_mem_rdata),
-        .rvfi_mem_wdata(rvfi_mem_wdata)
+        .rvfi_mem_wdata(rvfi_mem_wdata),
+        .rvfi_frd_valid(rvfi_frd_valid), .rvfi_frd_addr(rvfi_frd_addr),
+        .rvfi_frd_wdata(rvfi_frd_wdata),
+        .rvfi_csr_valid(rvfi_csr_valid), .rvfi_csr_addr(rvfi_csr_addr),
+        .rvfi_csr_wdata(rvfi_csr_wdata)
 `endif
     );
 
