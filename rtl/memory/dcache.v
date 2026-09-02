@@ -240,4 +240,31 @@ module dcache (
             endcase
         end
     end
+`ifdef FORMAL
+    reg formal_past_valid = 0;
+    initial assume(!rst_n);
+    always @(posedge clk) begin
+        formal_past_valid <= 1;
+        if (formal_past_valid) assume(rst_n);
+        if (formal_past_valid && rst_n) begin
+        if ($past(rst_n && mem_req_valid && !mem_req_ready)) begin
+            assert(mem_req_valid);
+            assert($stable({mem_req_write, mem_req_addr, mem_req_wdata,
+                            mem_req_be, mem_req_amo, mem_req_amo_op}));
+        end
+        if (state == AMO_REQ && amo_op == 5'b00011)
+            assert($past(state == IDLE && cpu_valid && cpu_amo &&
+                         cpu_amo_op == 5'b00011 && reservation_valid &&
+                         reservation_addr == cpu_addr[31:2]));
+        if ($past(state == IDLE && cpu_valid && cpu_amo &&
+                  cpu_amo_op == 5'b00011 &&
+                  (!reservation_valid || reservation_addr != cpu_addr[31:2])))
+            assert(state == COMPLETE && complete_rdata == 1 &&
+                   !mem_req_valid);
+        if ($past(rst_n && state == LOAD_WAIT && mem_rsp_valid &&
+                  mem_rsp_error))
+            assert(valid[$past(fill_index)] == 0);
+        end
+    end
+`endif
 endmodule

@@ -104,6 +104,7 @@ module icache (
                     end
                 end
                 REQ: begin
+                    if (cancel || invalidate) drop_fill <= 1;
                     if (!mem_req_allow) begin
                         if (fill_word == required_word)
                             state <= ERROR;
@@ -115,10 +116,8 @@ module icache (
                                 fill_word <= fill_word + 1;
                             end
                         end
-                    end else if ((cancel || invalidate) && !mem_req_ready) begin
-                        state <= IDLE;
                     end else if (mem_req_ready) begin
-                        drop_fill <= cancel || invalidate;
+                        drop_fill <= drop_fill || cancel || invalidate;
                         state <= WAIT_RSP;
                     end
                 end
@@ -146,4 +145,22 @@ module icache (
             endcase
         end
     end
+`ifdef FORMAL
+    reg formal_past_valid = 0;
+    initial assume(!rst_n);
+    always @(posedge clk) begin
+        formal_past_valid <= 1;
+        if (formal_past_valid) assume(rst_n);
+        if (formal_past_valid && rst_n) begin
+        if ($past(rst_n && mem_req_valid && !mem_req_ready)) begin
+            assert(mem_req_valid);
+            assert($stable(mem_req_addr));
+        end
+        if ($past(rst_n && invalidate)) assert(valid == 0);
+        if ($past(rst_n && state == WAIT_RSP && mem_rsp_valid &&
+                  (mem_rsp_error || drop_fill || cancel || invalidate)))
+            assert(valid[$past(fill_index)] == 0);
+        end
+    end
+`endif
 endmodule

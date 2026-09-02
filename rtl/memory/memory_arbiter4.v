@@ -92,4 +92,20 @@ module memory_arbiter4 (
             if (busy && ext_rsp_valid && ext_rsp_ready) busy <= 0;
         end
     end
+`ifdef FORMAL
+    reg formal_past_valid = 0;
+    initial assume(!rst_n);
+    always @(posedge clk) begin
+        formal_past_valid <= 1;
+        if (formal_past_valid) assume(rst_n);
+        if (formal_past_valid && rst_n) begin
+            if ($past(ext_req_valid && !ext_req_ready)) begin
+                assert(ext_req_valid);
+                assert($stable({ext_req_write, ext_req_addr, ext_req_wdata,
+                                ext_req_be, ext_req_amo, ext_req_amo_op}));
+            end
+            if (ext_req_write || ext_req_amo) assert(ext_req_valid);
+        end
+    end
+`endif
 endmodule

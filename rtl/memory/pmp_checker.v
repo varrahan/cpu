@@ -125,5 +125,16 @@ module pmp_checker (
         end
         if (privilege != PRIV_M && !matched) allow = 0;
     end
+`ifdef FORMAL
+    always @(*) begin
+        if (privilege != PRIV_M &&
+            pmpcfg0[4:3] == 0 && pmpcfg0[12:11] == 0 &&
+            pmpcfg0[20:19] == 0 && pmpcfg0[28:27] == 0)
+            assert(!allow);
+        if (privilege == PRIV_M &&
+            !(pmpcfg0[7] || pmpcfg0[15] || pmpcfg0[23] || pmpcfg0[31]))
+            assert(allow);
+    end
+`endif
 `endif
 endmodule
