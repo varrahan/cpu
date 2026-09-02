@@ -6,6 +6,7 @@ VERILATOR_DIR = build/verilator/top
 VERILATOR_BIN = $(VERILATOR_DIR)/Vtb_top
 PHOTONIC_DIR = build/photonic
 PHOTONIC_NETLIST = $(PHOTONIC_DIR)/top_mapped.v
+PHYSICAL_NETLIST = build/physical/top_physical.json
 ARCH_DIR = build/architecture
 PROGRAM_DIR = build/programs
 STRESS_SRC = sim/programs/rv32gc_stress.c sim/programs/rv32gc_sweep.S
@@ -20,7 +21,8 @@ STRESS_HEX = $(PROGRAM_DIR)/rv32gc_stress.hex
 	timing-check timing-explore timing-signoff formal formal-compile check \
 	release-check extended-units fpu-check pmp-check sv32-check debug-check \
 	photonic-macros known-state-check stress-image architecture-cert \
-	lint-check cdc-check jtag-debug-check rvfi-diff softfloat-check boot-check
+	lint-check cdc-check jtag-debug-check rvfi-diff softfloat-check boot-check \
+	photonic-physical equivalence-check dft-check toolchain-check reproduce-check
 
 FETCH_SRC = rtl/fetch/rvc_decompressor.v \
             rtl/fetch/fetch_stage.v
@@ -87,6 +89,9 @@ photonic-map:
 photonic-check: photonic-map photonic-macros
 	python3 physical/netlist_contract.py
 
+photonic-physical: photonic-map
+	python3 physical/insert_support.py
+
 photonic-cells:
 	mkdir -p $(PHOTONIC_DIR)
 	iverilog -g2012 -s tb_photonic_cells -o $(PHOTONIC_DIR)/cells.vvp \
@@ -151,33 +156,57 @@ debug-check:
 architecture-check: compile run architecture-units extended-units fpu-check \
 	pmp-check sv32-check debug-check formal formal-compile
 
-physical-preflight: photonic-map
+physical-preflight: photonic-physical
 	python3 physical/preflight.py
 
-timing-check: photonic-map
-	python3 physical/timing.py --frequencies-ghz 100 --require-model-pass
+timing-check: photonic-physical
+	python3 physical/timing.py --physical-netlist $(PHYSICAL_NETLIST) \
+		--require-model-pass
 
-timing-explore: photonic-map
-	python3 physical/timing.py --frequencies-ghz 100 120
+timing-explore: photonic-physical
+	python3 physical/timing.py --physical-netlist $(PHYSICAL_NETLIST) \
+		--frequencies-ghz 100 120
 
-timing-signoff: photonic-map
-	python3 physical/timing.py --frequencies-ghz 100 --require-pass
+timing-signoff: photonic-physical
+	python3 physical/timing.py --physical-netlist $(PHYSICAL_NETLIST) \
+		--require-pass
 
-physical-release: photonic-map
+physical-release: photonic-physical
 	python3 physical/preflight.py --require-release
 
 formal:
 	sby -f -d build/formal/control formal/control.sby
+	sby -f -d build/formal/pmp formal/pmp.sby
+	sby -f -d build/formal/safety formal/safety.sby
+	sby -f -d build/formal/top formal/top.sby
 
 formal-compile:
 	mkdir -p build/formal
 	iverilog -g2012 -DSYNTHESIS -DRISCV_FORMAL -s top \
 		-o build/formal/rvfi.vvp $(RTL_SRC)
 
-check: architecture-check photonic-cells photonic-check known-state-check \
-	physical-preflight timing-check
+equivalence-check:
+	mkdir -p build/equivalence
+	yosys -q -s synth/equivalence.ys
+	yosys-abc -c "cec -T 120 -p build/equivalence/gold.aig build/equivalence/gate.aig" \
+		> build/equivalence/cec.log
+	grep -q "Networks are equivalent" build/equivalence/cec.log
+	@echo "PASS: RTL and LUT-mapped netlist are equivalent"
 
-release-check: check timing-signoff physical-release
+dft-check:
+	python3 physical/check_dft.py
+
+toolchain-check: act4-source softfloat-source
+	python3 sim/check_toolchain.py
+
+reproduce-check:
+	$(MAKE) clean
+	$(MAKE) toolchain-check architecture-cert
+
+check: architecture-check photonic-cells photonic-check photonic-physical \
+	equivalence-check known-state-check physical-preflight timing-check dft-check
+
+release-check: architecture-cert timing-signoff physical-release
 
 $(STRESS_HEX): $(STRESS_SRC) $(STRESS_LINK) $(STRESS_COVERAGE)
 	mkdir -p $(PROGRAM_DIR)
@@ -203,8 +232,7 @@ run:
 	$(VERILATOR_BIN)
 
 clean:
-	rm -f $(OUT) $(WAVE)
-
+	rm -rf build
 	@echo "Clean complete."
 
 ACT4_DIR = build/act4
@@ -218,17 +246,22 @@ ACT4_EXTENSIONS = I,M,F,D,Zicsr,Zifencei,Zca,Zcf,Zcd,Zaamo,Zalrsc
 ACT4_ELFS = $(ACT4_SRC)/$(ACT4_WORK)/photonic-rv32gc/elfs/rv32i
 ACT4_HEX = $(ACT4_DIR)/hex-rv32gc
 ACT4_JOBS ?= 8
+RVFI_INST_LIMIT ?= 100000
 ACT4_VERILATOR_DIR = build/verilator/act4
 ACT4_BIN = $(ACT4_VERILATOR_DIR)/Vtb_act4
 SOFTFLOAT_REV = a0c6494cdc11865811dec815d5c0049fba9d82a8
 SOFTFLOAT_SRC = build/softfloat/source
 SOFTFLOAT_BUILD = $(SOFTFLOAT_SRC)/build/Linux-x86_64-GCC
+SOFTFLOAT_RISCV = $(SOFTFLOAT_BUILD)/.riscv-specialization
 BOOT_ELF = $(PROGRAM_DIR)/architecture_boot.elf
 BOOT_HEX = $(PROGRAM_DIR)/architecture_boot.hex
+INTERRUPT_ELF = $(PROGRAM_DIR)/interrupt_diff.elf
+INTERRUPT_HEX = $(PROGRAM_DIR)/interrupt_diff.hex
+INTERRUPT_TOHOST = $(PROGRAM_DIR)/interrupt_diff.tohost
 
 .PHONY: act4-source act4-config act4-elfs act4-compile act4-hex \
 	act4-official softfloat-source softfloat-check boot-image boot-check \
-	rvfi-diff lint-check cdc-check jtag-debug-check architecture-cert
+	rvfi-diff interrupt-image lint-check cdc-check jtag-debug-check architecture-cert
 
 act4-source:
 	@if [ ! -d $(ACT4_SRC)/.git ]; then \
@@ -298,8 +331,12 @@ softfloat-source:
 	fi
 	@test "$$(git -C $(SOFTFLOAT_SRC) rev-parse HEAD)" = "$(SOFTFLOAT_REV)"
 
-softfloat-check: softfloat-source
-	$(MAKE) -C $(SOFTFLOAT_BUILD) -j8
+$(SOFTFLOAT_RISCV): softfloat-source
+	$(MAKE) -C $(SOFTFLOAT_BUILD) clean
+	$(MAKE) -C $(SOFTFLOAT_BUILD) SPECIALIZE_TYPE=RISCV -j8
+	touch $@
+
+softfloat-check: $(SOFTFLOAT_RISCV)
 	mkdir -p build/verilator/softfloat
 	verilator $(VERILATOR_FLAGS) --top-module tb_fpu_random \
 		-Mdir build/verilator/softfloat $(COMMON_CELLS_SRC) $(FPNEW_SRC) \
@@ -321,17 +358,51 @@ boot-image: act4-source
 boot-check: act4-compile boot-image
 	$(ACT4_BIN) +hex=$(BOOT_HEX) +test=machine-to-sv32-boot +timeout=1000000
 
-rvfi-diff: act4-compile act4-hex
-	mkdir -p build/rvfi
-	$(ACT4_BIN) +hex=$(ACT4_HEX)/I/I-add-00.hex +test=rvfi-I-add \
-		+tohost=$$(cat $(ACT4_HEX)/I/I-add-00.tohost) +reset_high \
-		+rvfi=build/rvfi/dut.log +timeout=5000000
-	docker run --rm -v $(abspath $(ACT4_SRC)):/act4 -w /act4 $(ACT4_IMAGE) \
-		sail_riscv_sim --config config/photonic-rv32gc/sail.json \
-		--trace-instr --trace-gpr --trace-output work/photonic/rvfi-sail.log \
-		work/photonic/photonic-rv32gc/elfs/rv32i/I/I-add-00.elf
-	python3 sim/compare_rvfi.py build/rvfi/dut.log \
-		$(ACT4_SRC)/work/photonic/rvfi-sail.log
+interrupt-image:
+	mkdir -p $(PROGRAM_DIR)
+	docker run --rm -v $(abspath .):/cpu -w /cpu $(ACT4_IMAGE) sh -c \
+		'riscv64-unknown-elf-gcc -march=rv32gc -mabi=ilp32d -nostdlib \
+			-nostartfiles -T sim/programs/interrupt_diff.ld -o $(INTERRUPT_ELF) \
+			sim/programs/interrupt_diff.S && \
+		riscv64-unknown-elf-objcopy -O verilog --verilog-data-width=1 \
+			$(INTERRUPT_ELF) $(INTERRUPT_HEX) && \
+		riscv64-unknown-elf-nm $(INTERRUPT_ELF) | grep " tohost$$" | cut -d" " -f1 \
+			> $(INTERRUPT_TOHOST) && sed -i "s/^@8/@0/" $(INTERRUPT_HEX)'
+
+rvfi-diff: act4-compile act4-hex interrupt-image
+	@mkdir -p build/rvfi; set -e; \
+	for case in I/I-add-00 Zaamo/Zaamo-amoadd.w-00 D/D-fmadd.d-00; do \
+		stem=$${case%/*}-$${case#*/}; \
+		$(ACT4_BIN) +hex=$(ACT4_HEX)/$$case.hex +test=rvfi-$$stem \
+			+tohost=$$(cat $(ACT4_HEX)/$$case.tohost) +reset_high \
+			+rvfi=build/rvfi/$$stem.dut.log +timeout=5000000; \
+		docker run --rm -v $(abspath $(ACT4_SRC)):/act4 -w /act4 \
+			$(ACT4_IMAGE) sail_riscv_sim \
+			--config config/photonic-rv32gc/sail.json \
+			--inst-limit $(RVFI_INST_LIMIT) \
+			--trace-instr --trace-gpr --trace-fpr --trace-csr --trace-mem \
+			--trace-exception --trace-interrupt \
+			--trace-output work/photonic/$$stem.sail.log \
+			work/photonic/photonic-rv32gc/elfs/rv32i/$$case.elf; \
+		python3 sim/compare_rvfi.py build/rvfi/$$stem.dut.log \
+			$(ACT4_SRC)/work/photonic/$$stem.sail.log; \
+	done
+	@set -e; rm -f build/rvfi/interrupt.sail.log; \
+	$(ACT4_BIN) +hex=$(INTERRUPT_HEX) +test=rvfi-interrupt \
+		+tohost=$$(cat $(INTERRUPT_TOHOST)) +reset_high \
+		+rvfi=build/rvfi/interrupt.dut.log +timeout=100000; \
+	docker run --rm -v $(abspath .):/cpu -w /cpu $(ACT4_IMAGE) sail_riscv_sim \
+		--config build/act4/source/config/photonic-rv32gc/sail.json \
+		--inst-limit $(RVFI_INST_LIMIT) \
+		--trace-instr --trace-gpr --trace-fpr --trace-csr --trace-mem \
+		--trace-exception --trace-interrupt \
+		--trace-output build/rvfi/interrupt.sail.log $(INTERRUPT_ELF); \
+	python3 sim/compare_rvfi.py build/rvfi/interrupt.dut.log \
+		build/rvfi/interrupt.sail.log --allow-interrupt-latency \
+		--require memory interrupts csr
+	python3 sim/compare_rvfi.py build/rvfi/D-D-fmadd.d-00.dut.log \
+		$(ACT4_SRC)/work/photonic/D-D-fmadd.d-00.sail.log \
+		--require memory privilege traps fp csr
 
 lint-check:
 	verilator --lint-only --timing --top-module top_jtag \
@@ -341,6 +412,8 @@ lint-check:
 		$(COMMON_CELLS_SRC) $(FPNEW_SRC) $(RTL_SRC) rtl/top/top_jtag.sv
 
 cdc-check:
+	mkdir -p build/cdc
+	yosys -q -s synth/cdc.ys
 	python3 sim/check_cdc.py
 
 jtag-debug-check:
@@ -349,5 +422,5 @@ jtag-debug-check:
 		rtl/debug/riscv_debug_transport.sv sim/tb_jtag_debug.sv
 	vvp $(ARCH_DIR)/jtag_debug.vvp
 
-architecture-cert: architecture-check lint-check cdc-check jtag-debug-check \
+architecture-cert: check lint-check cdc-check jtag-debug-check \
 	act4-official rvfi-diff softfloat-check boot-check

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "tools": [
+    {"command": ["yosys", "-V"], "contains": "Yosys 0.33"},
+    {"command": ["iverilog", "-V"], "contains": "Icarus Verilog version 12.0"},
+    {"command": ["verilator", "--version"], "contains": "Verilator 5.020"},
+    {"command": ["sby", "--version"], "contains": "SBY v0.67"},
+    {"command": ["z3", "--version"], "contains": "Z3 version 4.8.12"},
+    {"command": ["clang", "--version"], "contains": "clang version 18.1.3"},
+    {"command": ["llvm-objcopy", "--version"], "contains": "LLVM version 18.1.3"},
+    {"command": ["python3", "--version"], "contains": "Python 3.12"},
+    {"command": ["docker", "--version"], "contains": "Docker version 29.7.2"},
+    {"command": ["make", "--version"], "contains": "GNU Make 4.3"}
+  ],
+  "sources": {
+    "act4": "1cb285fe70ecc375422d2a72b7b5183a9f0ea771",
+    "softfloat": "a0c6494cdc11865811dec815d5c0049fba9d82a8"
+  },
+  "containers": {
+    "act4": "ghcr.io/riscv/act4-build:act4@sha256:6c1967e40bb17ef23b9a175529882128dd04d76990f13fafa7c9756bac761a77"
+  }
+}
