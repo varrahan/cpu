@@ -21,7 +21,8 @@ STRESS_HEX = $(PROGRAM_DIR)/rv32gc_stress.hex
 	timing-check timing-explore timing-signoff formal formal-compile check \
 	release-check extended-units fpu-check pmp-check sv32-check debug-check \
 	photonic-macros known-state-check stress-image architecture-cert \
-	lint-check cdc-check jtag-debug-check rvfi-diff softfloat-check boot-check \
+	lint-check cdc-check jtag-debug-check openocd-debug-check rvfi-diff \
+	softfloat-check boot-check os-check \
 	photonic-physical equivalence-check dft-check toolchain-check reproduce-check
 
 FETCH_SRC = rtl/fetch/rvc_decompressor.v \
@@ -112,8 +113,16 @@ known-state-check: $(STRESS_HEX) photonic-map
 		rtl/photonic/photonic_cells.v rtl/photonic/photonic_memories.v \
 		sim/photonic_macro_known_models.v $(PHOTONIC_NETLIST) \
 		sim/tb_mapped_known.v
-	vvp $(PHOTONIC_DIR)/known_state.vvp
+	vvp $(PHOTONIC_DIR)/known_state.vvp +known_only
 	python3 physical/check_vcd_known.py
+	verilator $(VERILATOR_FLAGS) -j 8 -DFUNCTIONAL_MACROS \
+		--top-module tb_mapped_known -Mdir build/verilator/mapped \
+		$(COMMON_CELLS_SRC) $(FPNEW_SRC) \
+		rtl/photonic/photonic_cells.v rtl/photonic/photonic_memories.v \
+		rtl/fetch/fetch_stage.v rtl/memory/pmp_checker.v \
+		rtl/execute/muldiv_unit.v rtl/execute/fpu_wrapper.sv \
+		$(PHOTONIC_NETLIST) sim/tb_mapped_known.v
+	build/verilator/mapped/Vtb_mapped_known +no_vcd
 
 architecture-units:
 	mkdir -p $(ARCH_DIR)
@@ -177,8 +186,9 @@ physical-release: photonic-physical
 formal:
 	sby -f -d build/formal/control formal/control.sby
 	sby -f -d build/formal/pmp formal/pmp.sby
-	sby -f -d build/formal/safety formal/safety.sby
-	sby -f -d build/formal/top formal/top.sby
+	sby -f --sequential --prefix build/formal/safety formal/safety.sby
+	yosys -ql build/formal/top.log -s formal/top.ys
+	@echo "PASS: bounded integrated top commit proof"
 
 formal-compile:
 	mkdir -p build/formal
@@ -196,7 +206,7 @@ equivalence-check:
 dft-check:
 	python3 physical/check_dft.py
 
-toolchain-check: act4-source softfloat-source
+toolchain-check: act4-source softfloat-source praxis-source openocd-source
 	python3 sim/check_toolchain.py
 
 reproduce-check:
@@ -255,13 +265,30 @@ SOFTFLOAT_BUILD = $(SOFTFLOAT_SRC)/build/Linux-x86_64-GCC
 SOFTFLOAT_RISCV = $(SOFTFLOAT_BUILD)/.riscv-specialization
 BOOT_ELF = $(PROGRAM_DIR)/architecture_boot.elf
 BOOT_HEX = $(PROGRAM_DIR)/architecture_boot.hex
+PRAXIS_REV = 277bd2b21124722209b93af3ec82ea182a22d79c
+PRAXIS_DIR = build/praxis
+PRAXIS_SRC = $(PRAXIS_DIR)/source
+PRAXIS_WORK = $(PRAXIS_DIR)/work
+PRAXIS_PATCHED = $(PRAXIS_WORK)/.photonic-port
+PRAXIS_BUILD = $(PRAXIS_WORK)/build
+PRAXIS_ELF = $(PRAXIS_BUILD)/praxis.elf
+PRAXIS_BIN = $(PRAXIS_BUILD)/praxis.bin
+PRAXIS_HEX = $(PRAXIS_BUILD)/praxis.hex
+OPENOCD_REV = 9ea7f3d647c8ecf6b0f1424002dfc3f4504a162c
+OPENOCD_DIR = build/openocd
+OPENOCD_SRC = $(OPENOCD_DIR)/source
+OPENOCD_BIN = $(OPENOCD_SRC)/src/openocd
+OPENOCD_VERILATOR_DIR = build/verilator/openocd
+OPENOCD_SERVER = $(OPENOCD_VERILATOR_DIR)/Vtop_jtag
 INTERRUPT_ELF = $(PROGRAM_DIR)/interrupt_diff.elf
 INTERRUPT_HEX = $(PROGRAM_DIR)/interrupt_diff.hex
 INTERRUPT_TOHOST = $(PROGRAM_DIR)/interrupt_diff.tohost
 
 .PHONY: act4-source act4-config act4-elfs act4-compile act4-hex \
 	act4-official softfloat-source softfloat-check boot-image boot-check \
-	rvfi-diff interrupt-image lint-check cdc-check jtag-debug-check architecture-cert
+	praxis-source os-image os-check \
+	rvfi-diff interrupt-image lint-check cdc-check jtag-debug-check \
+	openocd-source openocd-debug-check architecture-cert
 
 act4-source:
 	@if [ ! -d $(ACT4_SRC)/.git ]; then \
@@ -358,6 +385,44 @@ boot-image: act4-source
 boot-check: act4-compile boot-image
 	$(ACT4_BIN) +hex=$(BOOT_HEX) +test=machine-to-sv32-boot +timeout=1000000
 
+praxis-source:
+	@if [ ! -d $(PRAXIS_SRC)/.git ]; then \
+		git clone --filter=blob:none https://github.com/fibonatto/PraxisOS.git $(PRAXIS_SRC); \
+		git -C $(PRAXIS_SRC) checkout --detach $(PRAXIS_REV); \
+	fi
+	@test "$$(git -C $(PRAXIS_SRC) rev-parse HEAD)" = "$(PRAXIS_REV)"
+
+$(PRAXIS_PATCHED): praxis-source sim/os/praxis.patch
+	rm -rf $(PRAXIS_WORK)
+	cp -a $(PRAXIS_SRC) $(PRAXIS_WORK)
+	git -C $(PRAXIS_WORK) apply $(abspath sim/os/praxis.patch)
+	touch $@
+
+$(PRAXIS_HEX): $(PRAXIS_PATCHED) sim/os/praxis_boot.S sim/os/praxis_qualification.c
+	mkdir -p $(PRAXIS_BUILD)
+	clang -std=c11 -O2 --target=riscv32-unknown-elf -march=rv32im -mabi=ilp32 \
+		-fuse-ld=lld -fno-stack-protector -ffreestanding -nostdlib \
+		-I$(PRAXIS_WORK)/include -Wl,-T$(PRAXIS_WORK)/src/user.ld \
+		-o $(PRAXIS_BUILD)/shell.elf sim/os/praxis_qualification.c \
+		$(PRAXIS_WORK)/src/user.c $(PRAXIS_WORK)/src/common.c
+	llvm-objcopy --set-section-flags .bss=alloc,contents -O binary \
+		$(PRAXIS_BUILD)/shell.elf $(PRAXIS_BUILD)/shell.bin
+	cd $(PRAXIS_BUILD) && llvm-objcopy -Ibinary -Oelf32-littleriscv shell.bin shell.bin.o
+	clang -std=c11 -O2 --target=riscv32-unknown-elf -march=rv32im -mabi=ilp32 \
+		-fuse-ld=lld -fno-stack-protector -ffreestanding -nostdlib \
+		-I$(PRAXIS_WORK)/include -Wl,-T$(PRAXIS_WORK)/src/kernel.ld \
+		-o $(PRAXIS_ELF) sim/os/praxis_boot.S $(PRAXIS_WORK)/src/kernel.c \
+		$(PRAXIS_WORK)/src/common.c $(PRAXIS_WORK)/src/context.c \
+		$(PRAXIS_WORK)/src/process.c $(PRAXIS_WORK)/src/memory.c \
+		$(PRAXIS_WORK)/src/sbi.c $(PRAXIS_BUILD)/shell.bin.o
+	llvm-objcopy -O binary $(PRAXIS_ELF) $(PRAXIS_BIN)
+	od -An -v -tx1 -w1 $(PRAXIS_BIN) > $(PRAXIS_HEX)
+
+os-image: $(PRAXIS_HEX)
+
+os-check: act4-compile os-image
+	$(ACT4_BIN) +hex=$(PRAXIS_HEX) +test=praxis-sv32 +require_os +timeout=5000000
+
 interrupt-image:
 	mkdir -p $(PROGRAM_DIR)
 	docker run --rm -v $(abspath .):/cpu -w /cpu $(ACT4_IMAGE) sh -c \
@@ -422,5 +487,31 @@ jtag-debug-check:
 		rtl/debug/riscv_debug_transport.sv sim/tb_jtag_debug.sv
 	vvp $(ARCH_DIR)/jtag_debug.vvp
 
-architecture-cert: check lint-check cdc-check jtag-debug-check \
-	act4-official rvfi-diff softfloat-check boot-check
+openocd-source:
+	@if [ ! -d $(OPENOCD_SRC)/.git ]; then \
+		git clone --filter=blob:none https://github.com/openocd-org/openocd.git $(OPENOCD_SRC); \
+		git -C $(OPENOCD_SRC) checkout --detach $(OPENOCD_REV); \
+		git -C $(OPENOCD_SRC) submodule update --init --depth 1; \
+	fi
+	@test "$$(git -C $(OPENOCD_SRC) rev-parse HEAD)" = "$(OPENOCD_REV)"
+
+$(OPENOCD_BIN): openocd-source
+	cd $(OPENOCD_SRC) && ./bootstrap
+	cd $(OPENOCD_SRC) && ./configure --enable-remote-bitbang \
+		--disable-internal-libjaylink --disable-werror
+	$(MAKE) -C $(OPENOCD_SRC) -j1
+
+$(OPENOCD_SERVER): sim/openocd_server.cpp $(RTL_SRC) rtl/top/top_jtag.sv
+	mkdir -p $(OPENOCD_VERILATOR_DIR)
+	verilator --cc --exe --build -Ithird_party/common_cells/include \
+		-Wno-fatal -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		-Wno-UNOPTFLAT -Wno-ASCRANGE -Wno-UNSIGNED --top-module top_jtag \
+		-Mdir $(OPENOCD_VERILATOR_DIR) $(COMMON_CELLS_SRC) $(FPNEW_SRC) \
+		$(RTL_SRC) rtl/top/top_jtag.sv $(abspath sim/openocd_server.cpp)
+
+openocd-debug-check: $(OPENOCD_BIN) $(OPENOCD_SERVER)
+	python3 sim/run_openocd_test.py $(OPENOCD_SERVER) $(OPENOCD_BIN) \
+		$(abspath $(OPENOCD_SRC)/tcl)
+
+architecture-cert: check lint-check cdc-check jtag-debug-check openocd-debug-check \
+	act4-official rvfi-diff softfloat-check boot-check os-check

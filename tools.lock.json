@@ -14,7 +14,9 @@
   ],
   "sources": {
     "act4": "1cb285fe70ecc375422d2a72b7b5183a9f0ea771",
-    "softfloat": "a0c6494cdc11865811dec815d5c0049fba9d82a8"
+    "softfloat": "a0c6494cdc11865811dec815d5c0049fba9d82a8",
+    "praxis": "277bd2b21124722209b93af3ec82ea182a22d79c",
+    "openocd": "9ea7f3d647c8ecf6b0f1424002dfc3f4504a162c"
   },
   "containers": {
     "act4": "ghcr.io/riscv/act4-build:act4@sha256:6c1967e40bb17ef23b9a175529882128dd04d76990f13fafa7c9756bac761a77"
