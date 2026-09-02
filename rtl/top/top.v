@@ -66,7 +66,13 @@ module top (
     output reg  [3:0]  rvfi_mem_rmask,
     output reg  [3:0]  rvfi_mem_wmask,
     output reg  [31:0] rvfi_mem_rdata,
-    output reg  [31:0] rvfi_mem_wdata
+    output reg  [31:0] rvfi_mem_wdata,
+    output reg         rvfi_frd_valid,
+    output reg  [4:0]  rvfi_frd_addr,
+    output reg  [63:0] rvfi_frd_wdata,
+    output reg         rvfi_csr_valid,
+    output reg  [11:0] rvfi_csr_addr,
+    output reg  [31:0] rvfi_csr_wdata
 `endif
 );
     localparam [31:0] CAUSE_INST_MISALIGNED = 0;
@@ -86,8 +92,8 @@ module top (
 
     wire redirect_fire;
     wire retirement_redirect_fire;
-    wire ex_async_reset = !rst_n || retirement_redirect_fire;
-    wire id_async_reset = !rst_n || redirect_fire;
+    wire ex_reset = !rst_n || retirement_redirect_fire;
+    wire id_reset = !rst_n || redirect_fire;
     wire [31:0] redirect_pc;
     wire mem_hold;
     wire execute_hold;
@@ -305,8 +311,8 @@ module top (
     reg [31:0] id_fetch_cause;
     reg [31:0] id_fetch_tval;
 
-    always @(posedge clk or posedge id_async_reset) begin
-        if (id_async_reset) begin
+    always @(posedge clk) begin
+        if (id_reset) begin
             id_valid <= 0;
         end else if (debug_halted || wfi_sleep) begin
             id_valid <= 0;
@@ -530,8 +536,8 @@ module top (
     assign stall_csr = (ex_valid && ex_csr_en) ||
                        (mem_valid && mem_csr_en);
 
-    always @(posedge clk or posedge ex_async_reset) begin
-        if (ex_async_reset) begin
+    always @(posedge clk) begin
+        if (ex_reset) begin
             ex_valid <= 0;
             ex_exception <= 0;
         end else if (branch_mispredict_ex) begin
@@ -832,8 +838,8 @@ module top (
         (ex_muldiv || (ex_fp_compute && csr_fp_enabled && !fpu_illegal));
     assign execute_hold = long_execute_hold || dmmu_hold;
 
-    always @(posedge clk or posedge ex_async_reset) begin
-        if (ex_async_reset) begin
+    always @(posedge clk) begin
+        if (ex_reset) begin
             ex_unit_started <= 0;
             ex_unit_complete <= 0;
         end else if (branch_mispredict_ex) begin
@@ -1212,6 +1218,7 @@ module top (
     wire [31:0] csr_trap_vector;
     wire [31:0] csr_return_pc;
     wire [31:0] csr_sreturn_pc;
+    wire [31:0] csr_commit_visible_data;
     wire csr_mstatus_mprv_unused;
 
     csr_file u_csr (
@@ -1224,6 +1231,7 @@ module top (
         .commit_valid      (csr_commit_valid),
         .commit_addr       (mem_csr_addr),
         .commit_data       (mem_csr_wdata),
+        .commit_visible_data(csr_commit_visible_data),
         .retire            (wb_valid),
         .fp_flags_valid    (fp_flags_commit),
         .fp_flags          (mem_fp_flags),
@@ -1447,6 +1455,30 @@ module top (
         end
     endfunction
 
+    function automatic [31:0] trace_amo_result;
+        input [4:0] op;
+        input [31:0] old_value, operand;
+        begin
+            case (op)
+                5'b00000: trace_amo_result = old_value + operand;
+                5'b00100: trace_amo_result = old_value ^ operand;
+                5'b01100: trace_amo_result = old_value & operand;
+                5'b01000: trace_amo_result = old_value | operand;
+                5'b10000: trace_amo_result = $signed(old_value) <
+                                                    $signed(operand)
+                                             ? old_value : operand;
+                5'b10100: trace_amo_result = $signed(old_value) >
+                                                    $signed(operand)
+                                             ? old_value : operand;
+                5'b11000: trace_amo_result = old_value < operand
+                                             ? old_value : operand;
+                5'b11100: trace_amo_result = old_value > operand
+                                             ? old_value : operand;
+                default:  trace_amo_result = operand;
+            endcase
+        end
+    endfunction
+
     always @(posedge clk) begin
         if (!rst_n) begin
             rvfi_valid <= 0;
@@ -1470,10 +1502,18 @@ module top (
             rvfi_mem_wmask <= 0;
             rvfi_mem_rdata <= 0;
             rvfi_mem_wdata <= 0;
+            rvfi_frd_valid <= 0;
+            rvfi_frd_addr <= 0;
+            rvfi_frd_wdata <= 0;
+            rvfi_csr_valid <= 0;
+            rvfi_csr_addr <= 0;
+            rvfi_csr_wdata <= 0;
         end else begin
             rvfi_valid <= mem_valid && !mem_hold;
             rvfi_halt <= 0;
             rvfi_intr <= 0;
+            rvfi_frd_valid <= 0;
+            rvfi_csr_valid <= 0;
             if (mem_valid && !mem_hold) begin
                 rvfi_order <= rvfi_next_order;
                 rvfi_next_order <= rvfi_next_order + 1;
@@ -1498,18 +1538,58 @@ module top (
                                               : mem_trace_next_pc;
                 rvfi_mem_addr <= (mem_mem_read || mem_mem_write || mem_amo)
                                  ? mem_alu_result : 0;
-                rvfi_mem_rmask <= (!exception_take && (mem_mem_read || mem_amo))
+                rvfi_mem_rmask <= (!exception_take && (mem_mem_read ||
+                                  (mem_amo && mem_amo_op != 5'b00011)))
                                   ? trace_load_mask(mem_funct3,
                                                     mem_alu_result[1:0]) : 0;
                 rvfi_mem_wmask <= (!exception_take && (mem_mem_write ||
-                                  (mem_amo && mem_amo_op != 5'b00010)))
+                                  (mem_amo && mem_amo_op != 5'b00010 &&
+                                   (mem_amo_op != 5'b00011 ||
+                                    dcache_cpu_rdata == 0))))
                                   ? (mem_amo ? 4'b1111 : mem_store_be) : 0;
                 rvfi_mem_rdata <= (mem_mem_read || mem_amo)
                                   ? dcache_cpu_rdata : 0;
                 rvfi_mem_wdata <= mem_mem_write ? mem_store_wdata :
-                                  mem_amo ? mem_rs2_data : 0;
+                                  mem_amo ? trace_amo_result(
+                                      mem_amo_op, dcache_cpu_rdata,
+                                      mem_rs2_data) : 0;
+                rvfi_frd_valid <= !exception_take && mem_fp_write;
+                rvfi_frd_addr <= mem_rd;
+                rvfi_frd_wdata <= mem_fp_load
+                    ? (mem_funct3 == 3'b011 ? dcache_cpu_rdata64
+                                            : {32'hffff_ffff, dcache_cpu_rdata})
+                    : mem_fp_data;
+                // mip is driven by platform interrupt state, not CSR writes.
+                rvfi_csr_valid <= csr_commit_valid && mem_csr_addr != 12'h344;
+                rvfi_csr_addr <= mem_csr_addr;
+                rvfi_csr_wdata <= csr_commit_visible_data;
             end
         end
     end
+`ifdef FORMAL_COMMIT
+    reg formal_past_valid = 0;
+    initial assume(!rst_n);
+    always @(posedge clk) begin
+        formal_past_valid <= 1;
+        if (formal_past_valid) assume(rst_n);
+        if (formal_past_valid && $past(rst_n)) begin
+            if ($past(mem_valid && !mem_hold)) begin
+                assert(rvfi_valid);
+                assert(rvfi_trap == $past(exception_take));
+            end
+            if ($past(mem_valid && !mem_hold && exception_take)) begin
+                assert(!wb_valid);
+                assert(rvfi_rd_addr == 0 && rvfi_mem_wmask == 0);
+                assert(!rvfi_frd_valid && !rvfi_csr_valid);
+            end
+            if ($past(mem_valid && !mem_hold && mem_reg_write && mem_rd == 0))
+                assert(rvfi_rd_wdata == 0);
+            if (rvfi_valid && rvfi_mem_wmask != 0)
+                assert(!rvfi_trap);
+            if (rvfi_valid && $past(rvfi_valid))
+                assert(rvfi_order == $past(rvfi_order) + 1);
+        end
+    end
+`endif
 `endif
 endmodule
