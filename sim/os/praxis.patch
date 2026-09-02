@@ -1,0 +1,77 @@
+diff --git a/src/kernel.c b/src/kernel.c
+index ecf2f89..1abab3e 100644
+--- a/src/kernel.c
++++ b/src/kernel.c
+@@ -208,6 +208,8 @@ void fs_flush(void){
+ 
+ void handle_exit(struct trap_frame *f){
+     printf("process %d exited\n", current_proc->pid);
++    if (current_proc->pid > 0)
++        *((volatile uint32_t *) 0x20000000) = 123456789;
+     current_proc->state = PROC_EXITED;
+     yield();
+     PANIC("unreachable");
+@@ -417,15 +419,7 @@ void kernel_main(void) {
+ 
+     WRITE_CSR(stvec, (uint32_t) kernel_entry);
+ 
+-    virtio_blk_init();
+-    fs_init();
+-
+-    char buf[SECTOR_SIZE];
+-    read_write_disk(buf, 0, false /* read from disk */);
+-    printf("first sector: %s\n", buf);
+-
+-    // strcpy(buf, "hello from kernel!!!\n");
+-    read_write_disk(buf, 0, true /* write to the disk */);
++    printf("PraxisOS kernel booted\n");
+ 
+     idle_proc = create_process(NULL, 0);
+     idle_proc->pid =    0; //idle
+diff --git a/src/kernel.ld b/src/kernel.ld
+index e194470..97caa64 100644
+--- a/src/kernel.ld
++++ b/src/kernel.ld
+@@ -1,7 +1,10 @@
+ ENTRY(boot)
+ 
+ SECTIONS {
+-    . = 0x80200000;
++    . = 0;
++    .mboot : { KEEP(*(.text.mboot)); }
++
++    . = 0x00200000;
+     __kernel_base = .;
+ 
+     .text :{
+@@ -29,6 +32,6 @@ SECTIONS {
+ 
+     . = ALIGN(4096);
+     __free_ram = .;
+-    . += 64 * 1024 * 1024; /* 64MB */
++    . += 1024 * 1024; /* 1MB */
+     __free_ram_end = . ;
+ }
+diff --git a/src/memory.c b/src/memory.c
+index d1b6c69..45fd162 100644
+--- a/src/memory.c
++++ b/src/memory.c
+@@ -36,7 +36,8 @@ void map_page(
+     // set the 2nd level page table entry to map the phisical page
+     uint32_t vpn0       = (vaddr >> 12) & 0x3ff;
+     uint32_t *table0    = (uint32_t *) ((table1[vpn1] >> 10) * PAGE_SIZE);
+-    table0[vpn0]        = ((paddr / PAGE_SIZE) << 10) | flags | PAGE_V;
++    table0[vpn0]        = ((paddr / PAGE_SIZE) << 10) | flags | PAGE_V |
++                          (1 << 6) | (1 << 7);
+ }
+ 
+ // map user pages
+@@ -50,7 +51,7 @@ uint32_t *create_user_pagetable(const void *image, size_t image_size){
+     ) {
+         map_page(page_table, paddr, paddr, PAGE_R | PAGE_W | PAGE_X);
+     }
+-    map_page(page_table, VIRTIO_BLK_PADDR, VIRTIO_BLK_PADDR, PAGE_R | PAGE_W);
++    map_page(page_table, 0x20000000, 0x20000000, PAGE_R | PAGE_W);
+ 
+     for (
+         uint32_t off = 0;
