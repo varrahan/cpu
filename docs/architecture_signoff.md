@@ -4,22 +4,25 @@
 
 `make architecture-cert` is the reproducible architecture gate. It combines
 the baseline checks, end-to-end and directed architecture regressions, formal
-control proof, whole-design lint, structural CDC policy, JTAG debug transport,
-official ACT4 tests, Sail/RVFI differential retirement, randomized SoftFloat
-comparison, and machine-to-supervisor Sv32 boot. The complete gate currently
-passes.
+proofs, whole-design lint, structural CDC policy, internal and OpenOCD-driven
+JTAG debug, official ACT4 tests, Sail/RVFI differential retirement, randomized
+SoftFloat comparison, focused machine-to-supervisor boot, and a PraxisOS Sv32
+supervisor/user boot.
 
 | Gate | Result |
 | --- | --- |
 | Baseline `make check` and `make architecture-check` | Pass |
 | Whole-design lint | Pass with zero warnings |
 | Interrupt, JTAG DMI, and reset structural CDC policy | Pass |
-| RISC-V Debug 1.0 JTAG DTM/minimal DM regression | Pass |
+| Control, PMP, partitioned safety, and modeled-interface integrated-top formal | Pass |
+| RISC-V Debug 1.0 JTAG DTM/DM regression | Pass |
+| External OpenOCD halt, XLEN/MISA discovery, GPR access, resume | Pass |
 | ACT4 supported ISA | 281/281 pass |
-| Sail/RVFI differential | 4,361 retirements match |
-| Berkeley SoftFloat randomized comparison | 4,000 cases pass |
+| Sail/RVFI differential | 52,464 retirements match |
+| Berkeley SoftFloat randomized comparison | 6,111 cases pass |
 | Machine-to-supervisor Sv32 boot | Pass in 9,538 cycles |
-| `make architecture-cert` | Pass |
+| PraxisOS supervisor/user Sv32 boot | Pass in 2,438,493 cycles |
+| Architecture-cert constituent gates | Pass; clean aggregate replay pending local Docker service |
 
 The ACT4 configuration is CPU-owned in
 `sim/act4/photonic-rv32gc.yaml` and covers `I`, `M`, `F`, `D`, `Zicsr`,
@@ -27,7 +30,9 @@ The ACT4 configuration is CPU-owned in
 commit `1cb285fe70ecc375422d2a72b7b5183a9f0ea771` and container digest
 `sha256:6c1967e40bb17ef23b9a175529882128dd04d76990f13fafa7c9756bac761a77`.
 Berkeley SoftFloat is pinned at commit
-`a0c6494cdc11865811dec815d5c0049fba9d82a8`.
+`a0c6494cdc11865811dec815d5c0049fba9d82a8`. PraxisOS is pinned at commit
+`277bd2b21124722209b93af3ec82ea182a22d79c`; OpenOCD is pinned at commit
+`9ea7f3d647c8ecf6b0f1424002dfc3f4504a162c`.
 
 The core interlocks decode while a CSR instruction is in EX/MEM, ensuring
 updates such as `mstatus.FS`, `frm`, and `fflags` commit before a following
@@ -38,20 +43,31 @@ and floating-point state, LR/SC and AMOs, precise traps, M/S/U privilege,
 delegation, vectored interrupts, WFI, PMP, Sv32 translation/page faults, cache
 behavior, memory backpressure, and halt/resume/register access.
 
+The pinned PraxisOS qualification boots through a small machine-mode firmware,
+enters its supervisor kernel, installs Sv32 page tables, reaches user mode, runs
+a user process, and exits through the platform pass address. This exercises a
+real supervisor OS rather than only the focused boot image.
+
+The external debug gate connects upstream OpenOCD to the Verilated `top_jtag`
+over remote bitbang. OpenOCD discovers the 32-bit hart and MISA, halts it,
+writes and reads `a0`, and resumes execution. The implemented profile has no
+program buffer, so OpenOCD reports that optional memory-consistency fence
+execution is unavailable; halt and abstract register access remain qualified.
+
 The end-to-end test now includes a compiler-produced freestanding workload,
 not only hand-encoded instruction fragments. Its sorting, CRC32, 3x3 matrix,
 GCD, atomic, CSR, integer, and floating-point signatures are checked in memory.
 The linked image gate requires 117 base/M/A/Zicsr/F/D mnemonics and contains
-160 compressed instructions. The mapped four-state run executes the same image
-for 1,024 cycles and rejects any X/Z transition at all mapped cell boundaries.
+160 compressed instructions. The mapped four-state run observes all mapped cell
+boundaries for 1,024 cycles. A second mapped run reuses the behavioral hard-
+macro models, completes the same image, and checks its full memory signature.
 
-This completes the repository architecture-certification gate; it is not a
-third-party RISC-V certification certificate. Production release still needs
-vendor CDC/RDC analysis, a full OS boot and software qualification campaign,
-external debugger interoperability against a complete Debug Module, DFT/scan,
-and physical implementation signoff. The included CDC check is structural,
-the boot image is a focused M/S/Sv32 program rather than an OS, and the JTAG
-block is a minimal Debug 1.0 transport/module implementation.
+This completes the repository-owned architecture qualification work; it is not
+a third-party RISC-V certification certificate. A clean aggregate replay still
+requires the pinned ACT4 Docker image and an available Docker daemon. Production
+release still needs vendor CDC/RDC, device characterization, and physical
+implementation signoff. The included CDC check is structural and the debug
+profile deliberately omits optional program-buffer/system-bus memory access.
 
 ## Preliminary mapped timing
 
@@ -70,46 +86,45 @@ macros removed the remaining storage read-mux trees.
 
 | Mapped resource | Before | Optimized | Change |
 | --- | ---: | ---: | ---: |
-| `P_CHI2_LUT3` | 55,162 | 16,273 | -70.5% |
-| Soft state cells | 11,381 | 3,397 | -70.2% |
+| `P_CHI2_LUT3` | 55,162 | 16,383 | -70.3% |
+| Soft state cells | 11,381 | 3,402 | -70.1% |
 | Photonic memory macros | 0 | 6 | +6 |
 
 | Measurement | Result |
 | --- | ---: |
-| Longest structural data path | 55 LUT/memory/regenerator levels |
-| Longest structural predicate-reset path | 54 levels |
-| Worst data path including regeneration | 7.570 ps before setup/margins |
-| Worst predicate-reset path | 7.685 ps before recovery/margins |
-| Research-model estimated Fmax | 107.80 GHz |
-| 100 GHz data slack | +0.680 ps |
-| 100 GHz predicate-reset slack | +0.615 ps |
-| Exploratory 120 GHz data slack | -0.737 ps (fail) |
-| Required worst data/reset-path regenerators | 19 / 21 |
-| Clocked state cells and macros | 3,406 |
+| Worst-delay structural data path | 158 LUT/memory/regenerator levels |
+| Reset-pin state cells | 0; reset timing is synchronous data timing |
+| Worst data path including regeneration | 7.965 ps before setup/margins |
+| Research-model estimated Fmax | 103.35 GHz |
+| 100 GHz data slack | +0.285 ps |
+| Exploratory 120 GHz data slack | -1.298 ps (fail) |
+| Required worst data-path regenerators | 25 |
+| Clocked state cells and macros | 3,411 |
 | Balanced clock-tree depth | 12 splitter levels |
-| Clock-tree splitters | 3,405 |
-| Modeled regenerated clock-tree delay | 0.420 ps |
+| Clock-tree splitters | 3,410 |
+| Modeled regenerated clock-tree delay | 0.570 ps |
 
 These numbers are structural estimates and may include false paths; they are
 not extracted signoff. They establish that the complete mapped graph meets the
 100 GHz cell contract, not that a manufacturable PIC meets it.
 
-At 100 GHz the optimized clock tree and margins leave the 7.570 ps worst data
-path with 0.680 ps slack. Predicate-reset recovery independently closes with
-0.615 ps slack. The model limits unregenerated loss to 8 dB and requires 19
-regenerations on the worst data path and 21 on the worst predicate-reset path.
-These are timing-model requirements; physical preflight still reports that
-regenerators have not been inserted.
+At 100 GHz the optimized clock tree and margins leave the 7.965 ps worst data
+path with 0.285 ps slack. The current map has no reset-pin state cells; all
+reset behavior is synchronous and is therefore covered by ordinary data-path
+timing. The model limits unregenerated loss to 8 dB and requires 25
+regenerations on the worst path. The repository-owned physical netlist now
+contains all 25,096 loss-driven regenerators and 32,122 required splitters;
+their vendor implementation and characterization remain outstanding.
 
 `make known-state-check` complements the architectural tests with a four-state
-simulation of the mapped CPU. After deterministic reset, all 81,955 mapped
+simulation of the mapped CPU. After deterministic reset, all 82,494 mapped
 leaf-cell signals and external outputs are binary. The structural contract also
 rejects X/Z constants and undriven or multiply driven nets. This guarantee
 requires driven external inputs and completion of the documented reset edge;
 power-up behavior before reset remains a platform responsibility.
 
 The logical clock cells and macros are contract-rated above 100 GHz. The
-12-level tree requires four path regenerators and has 0.420 ps modeled delay
+12-level tree requires six path regenerators and has 0.570 ps modeled delay
 before extracted routing and coupling. Receiver threshold, source power,
 regenerator gain, GDS cells, PVT/thermal behavior, and extracted skew/loss
 remain uncharacterized. Consequently `make timing-check` passes while
