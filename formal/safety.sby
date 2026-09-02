@@ -1,13 +1,28 @@
+[tasks]
+regfile
+icache
+dcache
+mmu
+arbiter
+
 [options]
 mode bmc
 depth 12
 
 [engines]
-smtbmc z3
+smtbmc --nomem --unroll z3
 
 [script]
-read -formal -sv -D FORMAL formal_models.sv regfile.v icache.v dcache.v sv32_mmu.v memory_arbiter4.v safety_harness.sv
-prep -top safety_harness
+regfile: read -formal -sv -D FORMAL formal_models.sv regfile.v safety_harness.sv
+regfile: prep -top regfile_harness
+icache: read -formal -sv -D FORMAL formal_models.sv icache.v safety_harness.sv
+icache: prep -top icache_harness
+dcache: read -formal -sv -D FORMAL formal_models.sv dcache.v safety_harness.sv
+dcache: prep -top dcache_harness
+mmu: read -formal -sv -D FORMAL formal_models.sv sv32_mmu.v safety_harness.sv
+mmu: prep -top mmu_harness
+arbiter: read -formal -sv -D FORMAL formal_models.sv memory_arbiter4.v safety_harness.sv
+arbiter: prep -top arbiter_harness
 
 [files]
 formal/formal_models.sv

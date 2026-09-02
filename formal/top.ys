@@ -1,0 +1,14 @@
+read -formal -sv -D RISCV_FORMAL -D FORMAL_COMMIT \
+    formal/formal_models.sv formal/top_models.sv \
+    rtl/fetch/rvc_decompressor.v rtl/fetch/fetch_stage.v \
+    rtl/decode/decoder.v rtl/decode/regfile.v rtl/decode/fp_regfile.v \
+    rtl/decode/csr_file.v rtl/execute/alu.v rtl/execute/branch_unit.v \
+    rtl/execute/forwarding_unit.v rtl/execute/hazard_unit.v \
+    rtl/memory/memory_stage.v rtl/memory/pmp_checker.v \
+    rtl/memory/memory_arbiter4.v rtl/debug/debug_control.v \
+    rtl/top/top.v formal/top_harness.sv
+prep -top top_harness
+flatten
+memory_map
+opt_clean
+sat -seq 8 -set-assumes -prove-asserts -verify
