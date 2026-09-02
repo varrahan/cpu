@@ -1,0 +1,19 @@
+[options]
+mode bmc
+depth 12
+
+[engines]
+smtbmc z3
+
+[script]
+read -formal -sv -D FORMAL formal_models.sv regfile.v icache.v dcache.v sv32_mmu.v memory_arbiter4.v safety_harness.sv
+prep -top safety_harness
+
+[files]
+formal/formal_models.sv
+rtl/decode/regfile.v
+rtl/memory/icache.v
+rtl/memory/dcache.v
+rtl/memory/sv32_mmu.v
+rtl/memory/memory_arbiter4.v
+formal/safety_harness.sv

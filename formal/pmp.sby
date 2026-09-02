@@ -1,0 +1,13 @@
+[options]
+mode prove
+depth 1
+
+[engines]
+smtbmc z3
+
+[script]
+read -formal -D FORMAL pmp_checker.v
+prep -top pmp_checker
+
+[files]
+rtl/memory/pmp_checker.v
