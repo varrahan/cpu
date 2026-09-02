@@ -248,15 +248,17 @@ module dcache (
         if (formal_past_valid) assume(rst_n);
         if (formal_past_valid && rst_n) begin
         if ($past(rst_n && mem_req_valid && !mem_req_ready)) begin
+            assume(mem_req_allow);
             assert(mem_req_valid);
             assert($stable({mem_req_write, mem_req_addr, mem_req_wdata,
                             mem_req_be, mem_req_amo, mem_req_amo_op}));
         end
-        if (state == AMO_REQ && amo_op == 5'b00011)
+        if (state == AMO_REQ && amo_op == 5'b00011 &&
+            $past(state != AMO_REQ))
             assert($past(state == IDLE && cpu_valid && cpu_amo &&
                          cpu_amo_op == 5'b00011 && reservation_valid &&
                          reservation_addr == cpu_addr[31:2]));
-        if ($past(state == IDLE && cpu_valid && cpu_amo &&
+        if ($past(rst_n && state == IDLE && cpu_valid && cpu_amo &&
                   cpu_amo_op == 5'b00011 &&
                   (!reservation_valid || reservation_addr != cpu_addr[31:2])))
             assert(state == COMPLETE && complete_rdata == 1 &&

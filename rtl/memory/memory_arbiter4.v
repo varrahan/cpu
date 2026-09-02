@@ -33,17 +33,28 @@ module memory_arbiter4 (
 );
     reg busy;
     reg [1:0] owner;
+    reg hold;
+    reg [1:0] hold_owner;
     reg [1:0] selected;
     reg selected_valid;
 
     always @(*) begin
         selected = 0;
-        selected_valid = !busy;
-        if (m0_req_valid) selected = 0;
-        else if (m1_req_valid) selected = 1;
-        else if (m2_req_valid) selected = 2;
-        else if (m3_req_valid) selected = 3;
-        else selected_valid = 0;
+        selected_valid = 0;
+        if (!busy && hold) begin
+            selected = hold_owner;
+            case (hold_owner)
+                0: selected_valid = m0_req_valid;
+                1: selected_valid = m1_req_valid;
+                2: selected_valid = m2_req_valid;
+                default: selected_valid = m3_req_valid;
+            endcase
+        end else if (!busy) begin
+            if (m0_req_valid) begin selected = 0; selected_valid = 1; end
+            else if (m1_req_valid) begin selected = 1; selected_valid = 1; end
+            else if (m2_req_valid) begin selected = 2; selected_valid = 1; end
+            else if (m3_req_valid) begin selected = 3; selected_valid = 1; end
+        end
         case (selected)
             0: begin ext_req_write = m0_req_write; ext_req_addr = m0_req_addr;
                 ext_req_wdata = m0_req_wdata; ext_req_be = m0_req_be;
@@ -59,6 +70,14 @@ module memory_arbiter4 (
                 ext_req_be = m3_req_be; ext_req_amo = m3_req_amo;
                 ext_req_amo_op = m3_req_amo_op; end
         endcase
+        if (!selected_valid) begin
+            ext_req_write = 0;
+            ext_req_addr = 0;
+            ext_req_wdata = 0;
+            ext_req_be = 0;
+            ext_req_amo = 0;
+            ext_req_amo_op = 0;
+        end
     end
 
     assign ext_req_valid = selected_valid;
@@ -83,11 +102,20 @@ module memory_arbiter4 (
                            owner == 2 ? m2_rsp_ready : m3_rsp_ready;
 
     always @(posedge clk) begin
-        if (!rst_n) begin busy <= 0; owner <= 0; end
+        if (!rst_n) begin
+            busy <= 0;
+            owner <= 0;
+            hold <= 0;
+            hold_owner <= 0;
+        end
         else begin
             if (!busy && ext_req_valid && ext_req_ready) begin
                 busy <= 1;
                 owner <= selected;
+                hold <= 0;
+            end else if (!busy && ext_req_valid) begin
+                hold <= 1;
+                hold_owner <= selected;
             end
             if (busy && ext_rsp_valid && ext_rsp_ready) busy <= 0;
         end
@@ -99,7 +127,27 @@ module memory_arbiter4 (
         formal_past_valid <= 1;
         if (formal_past_valid) assume(rst_n);
         if (formal_past_valid && rst_n) begin
-            if ($past(ext_req_valid && !ext_req_ready)) begin
+            if ($past(rst_n && m0_req_valid && !m0_req_ready)) begin
+                assume(m0_req_valid);
+                assume($stable({m0_req_write, m0_req_addr, m0_req_wdata,
+                                m0_req_be, m0_req_amo, m0_req_amo_op}));
+            end
+            if ($past(rst_n && m1_req_valid && !m1_req_ready)) begin
+                assume(m1_req_valid);
+                assume($stable({m1_req_write, m1_req_addr, m1_req_wdata,
+                                m1_req_be, m1_req_amo, m1_req_amo_op}));
+            end
+            if ($past(rst_n && m2_req_valid && !m2_req_ready)) begin
+                assume(m2_req_valid);
+                assume($stable({m2_req_write, m2_req_addr, m2_req_wdata,
+                                m2_req_be, m2_req_amo, m2_req_amo_op}));
+            end
+            if ($past(rst_n && m3_req_valid && !m3_req_ready)) begin
+                assume(m3_req_valid);
+                assume($stable({m3_req_write, m3_req_addr, m3_req_wdata,
+                                m3_req_be, m3_req_amo, m3_req_amo_op}));
+            end
+            if ($past(rst_n && ext_req_valid && !ext_req_ready)) begin
                 assert(ext_req_valid);
                 assert($stable({ext_req_write, ext_req_addr, ext_req_wdata,
                                 ext_req_be, ext_req_amo, ext_req_amo_op}));

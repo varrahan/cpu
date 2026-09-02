@@ -17,8 +17,9 @@ module regfile (
     wire [4:0] shared_rs1_addr = debug_re ? debug_addr : rs1_addr;
     wire memory_we = (debug_we && debug_addr != 0) ||
                      (wr_en && rd_addr != 0);
-    wire [4:0] memory_waddr = debug_we ? debug_addr : rd_addr;
-    wire [31:0] memory_wdata = debug_we ? debug_wdata : rd_data;
+    wire debug_memory_we = debug_we && debug_addr != 0;
+    wire [4:0] memory_waddr = debug_memory_we ? debug_addr : rd_addr;
+    wire [31:0] memory_wdata = debug_memory_we ? debug_wdata : rd_data;
     wire [63:0] memory_rdata;
 
     P_MEM_ASYNC #(.DATA_WIDTH(32), .ADDR_WIDTH(5), .READ_PORTS(2)) u_regs (

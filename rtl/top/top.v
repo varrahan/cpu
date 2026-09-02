@@ -1218,7 +1218,9 @@ module top (
     wire [31:0] csr_trap_vector;
     wire [31:0] csr_return_pc;
     wire [31:0] csr_sreturn_pc;
+    /* verilator lint_off UNUSEDSIGNAL */
     wire [31:0] csr_commit_visible_data;
+    /* verilator lint_on UNUSEDSIGNAL */
     wire csr_mstatus_mprv_unused;
 
     csr_file u_csr (

@@ -96,7 +96,7 @@ def advance(trace, cell_db, corner, delay_ps, loss_db,
 
 def path_analysis(module, cell_db, corner, source_kind,
                   endpoint_ports=("D",), source_ports=None,
-                  output_endpoints=False):
+                  output_endpoints=False, allow_empty=False):
     cells = module["cells"]
     explicit_support = any(
         cell["type"] == "P_SPLIT2" for cell in cells.values()
@@ -280,6 +280,8 @@ def path_analysis(module, cell_db, corner, source_kind,
             for bit in port["bits"] if bit in arrivals
         ]
     if not endpoints:
+        if allow_empty:
+            return None
         raise ValueError(
             f"no {source_kind}-to-{','.join(endpoint_ports)} path found")
 
@@ -396,6 +398,8 @@ def self_test():
     }
     result = path_analysis(memory_module, db, "maximum", "latch")
     assert math.isclose(result["delay_ps"], 1.0)
+    assert path_analysis(module, db, "maximum", "latch",
+                         endpoint_ports=("RESET",), allow_empty=True) is None
 
 
 def main():
@@ -447,7 +451,7 @@ def main():
         source_ports=set(constraints["output_ports"]), output_endpoints=True,
     )
     reset_path = path_analysis(module, cell_db, "maximum", "latch",
-                               endpoint_ports=("RESET",))
+                               endpoint_ports=("RESET",), allow_empty=True)
     tree = clock_tree(logical_module, cell_db, "maximum")
     physical_clock = physical.get("physical_support", {}).get("clock_tree")
     if physical_clock:
@@ -500,8 +504,9 @@ def main():
             period * args.uncertainty_fraction
         skew = period * args.skew_fraction
         required = maximum["delay_ps"] + setup + uncertainty + skew
-        reset_required = (reset_path["delay_ps"] + reset_recovery +
-                          uncertainty + skew)
+        reset_required = None if reset_path is None else (
+            reset_path["delay_ps"] + reset_recovery + uncertainty + skew
+        )
         input_required = (constraints["input_delay_ps"] + input_path["delay_ps"] +
                           setup + uncertainty + skew)
         output_required = (output_path["delay_ps"] +
@@ -515,7 +520,8 @@ def main():
             "slack_ps": period - required,
             "logic_meets_model_timing": required <= period,
             "predicate_reset_required_ps": reset_required,
-            "predicate_reset_meets_model_timing": reset_required <= period,
+            "predicate_reset_meets_model_timing":
+                reset_required is None or reset_required <= period,
             "input_interface_required_ps": input_required,
             "input_interface_meets_model_timing": input_required <= period,
             "output_interface_required_ps": output_required,
@@ -559,9 +565,8 @@ def main():
             target["combinational_cells_meet_target_rate"] and
             target["macros_meet_target_rate"] and
             target["pulse_fits_period"]
-            and all(path["uninserted_regenerators"] == 0 for path in (
-                maximum, reset_path, input_path, output_path
-            ))
+            and all(path is None or path["uninserted_regenerators"] == 0
+                    for path in (maximum, reset_path, input_path, output_path))
         )
 
     output = {
@@ -576,9 +581,11 @@ def main():
         "maximum_latch_to_output": output_path,
         "maximum_latch_to_predicate_reset": reset_path,
         "estimated_model_fmax_ghz": 1000 / max(
-            maximum["delay_ps"] + setup + constraints["uncertainty_ps"],
-            reset_path["delay_ps"] + reset_recovery +
-            constraints["uncertainty_ps"],
+            [maximum["delay_ps"] + setup + constraints["uncertainty_ps"]] +
+            ([] if reset_path is None else [
+                reset_path["delay_ps"] + reset_recovery +
+                constraints["uncertainty_ps"]
+            ])
         ) / (1 + args.skew_fraction),
         "clock_tree": tree,
         "physical_macros": macros,

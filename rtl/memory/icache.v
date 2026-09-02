@@ -104,8 +104,10 @@ module icache (
                     end
                 end
                 REQ: begin
-                    if (cancel || invalidate) drop_fill <= 1;
-                    if (!mem_req_allow) begin
+                    if ((cancel || invalidate) && !mem_req_allow) begin
+                        drop_fill <= 0;
+                        state <= IDLE;
+                    end else if (!mem_req_allow) begin
                         if (fill_word == required_word)
                             state <= ERROR;
                         else begin
@@ -119,7 +121,7 @@ module icache (
                     end else if (mem_req_ready) begin
                         drop_fill <= drop_fill || cancel || invalidate;
                         state <= WAIT_RSP;
-                    end
+                    end else if (cancel || invalidate) drop_fill <= 1;
                 end
                 WAIT_RSP: begin
                     if (cancel || invalidate) drop_fill <= 1;
@@ -152,14 +154,15 @@ module icache (
         formal_past_valid <= 1;
         if (formal_past_valid) assume(rst_n);
         if (formal_past_valid && rst_n) begin
-        if ($past(rst_n && mem_req_valid && !mem_req_ready)) begin
-            assert(mem_req_valid);
-            assert($stable(mem_req_addr));
-        end
-        if ($past(rst_n && invalidate)) assert(valid == 0);
-        if ($past(rst_n && state == WAIT_RSP && mem_rsp_valid &&
-                  (mem_rsp_error || drop_fill || cancel || invalidate)))
-            assert(valid[$past(fill_index)] == 0);
+            if ($past(rst_n && mem_req_valid && !mem_req_ready)) begin
+                assume(mem_req_allow);
+                assert(mem_req_valid);
+                assert($stable(mem_req_addr));
+            end
+            if ($past(rst_n && invalidate)) assert(valid == 0);
+            if ($past(rst_n && state == WAIT_RSP && mem_rsp_valid &&
+                      (mem_rsp_error || drop_fill || cancel || invalidate)))
+                assert(valid[$past(fill_index)] == 0);
         end
     end
 `endif

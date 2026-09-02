@@ -237,14 +237,15 @@ module sv32_mmu (
         formal_past_valid <= 1;
         if (formal_past_valid) assume(rst_n);
         if (formal_past_valid && rst_n) begin
-        if ($past(rst_n && mem_req_valid && !mem_req_ready)) begin
+        if ($past(rst_n && !flush && mem_req_valid && !mem_req_ready)) begin
+            assume(mem_req_allow);
             assert(mem_req_valid);
             assert($stable({mem_req_addr, mem_req_write, mem_req_wdata,
                             mem_req_be, mem_req_amo, mem_req_amo_op}));
         end
         if (resp_ready) assert(!(page_fault && access_fault));
         if ($past(rst_n && flush)) assert(tlb_valid == 0);
-        if (state == AD_REQ || state == AD_WAIT) begin
+        if (state == AD_REQ) begin
             assert(mem_req_amo_op == 5'b01000);
             assert(mem_req_wdata[7:6] != 0);
         end

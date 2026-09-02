@@ -104,7 +104,8 @@ module riscv_debug_transport (
             end
             if (tap_state == SHIFT_DR) begin
                 if (ir == 5'h1f) bypass <= tdi;
-                else dr_shift <= {tdi, dr_shift[40:1]};
+                else if (ir == IR_DMI) dr_shift <= {tdi, dr_shift[40:1]};
+                else dr_shift[31:0] <= {tdi, dr_shift[31:1]};
             end
             if (tap_state == UPDATE_DR && ir == IR_DTMCS && dr_shift[16])
                 dmi_status_tck <= 0;
@@ -191,6 +192,7 @@ module riscv_debug_transport (
                         7'h17: begin
                             if (abstract_busy) cmderr <= 3'd1;
                             else if (dmi_data_tck[31:24] != 0 ||
+                                     dmi_data_tck[22:20] != 3'd2 ||
                                      !dmi_data_tck[17]) cmderr <= 3'd2;
                             else if (dmi_data_tck[15:0] == 16'h7b0) begin
                                 if (dmi_data_tck[16]) dcsr_step <= data0[2];
@@ -201,6 +203,9 @@ module riscv_debug_transport (
                                     debug_dpc_wdata <= data0;
                                     debug_dpc_write <= debug_halted;
                                 end else data0 <= debug_dpc;
+                            end else if (dmi_data_tck[15:0] == 16'h0301 &&
+                                         !dmi_data_tck[16]) begin
+                                data0 <= 32'h4014_112d;
                             end else if (dmi_data_tck[15:12] == 4'h1 &&
                                          dmi_data_tck[11:5] <= 7'd1) begin
                                 if (!debug_halted) cmderr <= 3'd4;
