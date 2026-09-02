@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 module tb_act4;
-    localparam integer MEM_BYTES = 1 << 20;
+    localparam integer MEM_BYTES = 1 << 22;
     localparam [31:0] CONSOLE_ADDR = 32'h1000_0000;
     localparam [31:0] HALT_ADDR = 32'h2000_0000;
     localparam [31:0] PASS_VALUE = 32'd123456789;
@@ -49,17 +49,21 @@ module tb_act4;
     reg [31:0] tohost_addr = 0;
     reg reset_high = 0;
     reg irq_m_external = 0;
+    reg require_os = 0;
+    reg saw_supervisor = 0;
+    reg saw_user = 0;
+    reg saw_sv32 = 0;
 
     assign imem_req_ready = !imem_rsp_valid;
     assign dmem_req_ready = !dmem_rsp_valid;
 
     function automatic memory_range(input [31:0] addr);
         memory_range = addr < MEM_BYTES ||
-                       (addr >= 32'h8000_0000 && addr < 32'h8010_0000);
+                       (addr >= 32'h8000_0000 && addr < 32'h8040_0000);
     endfunction
 
     function automatic [31:0] memory_addr(input [31:0] addr);
-        memory_addr = {12'b0, addr[19:0]};
+        memory_addr = {10'b0, addr[21:0]};
     endfunction
 
     function automatic [31:0] load_word(input [31:0] addr);
@@ -145,6 +149,9 @@ module tb_act4;
                     end
                 end else if (dmem_req_addr == HALT_ADDR && dmem_req_write) begin
                     if (dmem_req_wdata == PASS_VALUE) begin
+                        if (require_os && !(saw_supervisor && saw_user && saw_sv32))
+                            $fatal(1, "Sv32 OS coverage missing: S=%0d U=%0d satp=%0d",
+                                   saw_supervisor, saw_user, saw_sv32);
                         $display("PASS: ACT4 %s (%0d cycles)", test_name, cycles);
                         $finish;
                     end else begin
@@ -194,6 +201,10 @@ module tb_act4;
     always @(posedge clk) begin
         if (!rst_n) expected_order <= 0;
         else if (rvfi_valid) begin
+            if (rvfi_mode == 2'b01) saw_supervisor <= 1;
+            if (rvfi_mode == 2'b00) saw_user <= 1;
+            if (rvfi_csr_valid && rvfi_csr_addr == 12'h180 && rvfi_csr_wdata[31])
+                saw_sv32 <= 1;
             if (rvfi_order != expected_order)
                 $fatal(1, "RVFI order discontinuity: got %0d expected %0d",
                        rvfi_order, expected_order);
@@ -286,6 +297,7 @@ module tb_act4;
             test_name = hex_path;
         void'($value$plusargs("tohost=%h", tohost_addr));
         reset_high = $test$plusargs("reset_high");
+        require_os = $test$plusargs("require_os");
         void'($value$plusargs("timeout=%d", timeout));
 `ifdef RISCV_FORMAL
         if ($value$plusargs("rvfi=%s", rvfi_path)) begin

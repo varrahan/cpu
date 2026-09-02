@@ -59,7 +59,38 @@ module tb_mapped_known;
                 dmem_rsp_valid <= 1;
                 dmem_rsp_rdata <= dmem[dmem_req_addr[14:2]];
                 dmem_rsp_error <= 0;
-                if (dmem_req_write)
+                if (dmem_req_amo) begin
+                    case (dmem_req_amo_op)
+                        5'b00010: ;
+                        5'b00011, 5'b00001:
+                            dmem[dmem_req_addr[14:2]] <= dmem_req_wdata;
+                        5'b00000: dmem[dmem_req_addr[14:2]] <=
+                                  dmem[dmem_req_addr[14:2]] + dmem_req_wdata;
+                        5'b00100: dmem[dmem_req_addr[14:2]] <=
+                                  dmem[dmem_req_addr[14:2]] ^ dmem_req_wdata;
+                        5'b01100: dmem[dmem_req_addr[14:2]] <=
+                                  dmem[dmem_req_addr[14:2]] & dmem_req_wdata;
+                        5'b01000: dmem[dmem_req_addr[14:2]] <=
+                                  dmem[dmem_req_addr[14:2]] | dmem_req_wdata;
+                        5'b10000: dmem[dmem_req_addr[14:2]] <=
+                                  $signed(dmem[dmem_req_addr[14:2]]) <
+                                  $signed(dmem_req_wdata)
+                                  ? dmem[dmem_req_addr[14:2]] : dmem_req_wdata;
+                        5'b10100: dmem[dmem_req_addr[14:2]] <=
+                                  $signed(dmem[dmem_req_addr[14:2]]) >
+                                  $signed(dmem_req_wdata)
+                                  ? dmem[dmem_req_addr[14:2]] : dmem_req_wdata;
+                        5'b11000: dmem[dmem_req_addr[14:2]] <=
+                                  dmem[dmem_req_addr[14:2]] < dmem_req_wdata
+                                  ? dmem[dmem_req_addr[14:2]] : dmem_req_wdata;
+                        5'b11100: dmem[dmem_req_addr[14:2]] <=
+                                  dmem[dmem_req_addr[14:2]] > dmem_req_wdata
+                                  ? dmem[dmem_req_addr[14:2]] : dmem_req_wdata;
+                        default: ;
+                    endcase
+                    if (dmem_req_amo_op == 5'b00011)
+                        dmem_rsp_rdata <= 0;
+                end else if (dmem_req_write)
                     for (lane = 0; lane < 4; lane = lane + 1)
                         if (dmem_req_be[lane])
                             dmem[dmem_req_addr[14:2]][lane*8 +: 8] <=
@@ -110,8 +141,10 @@ module tb_mapped_known;
             dmem[index] = 0;
         end
         $readmemh("build/programs/rv32gc_stress.hex", imem);
-        $dumpfile("build/photonic/known_state.vcd");
-        $dumpvars(0, tb_mapped_known);
+        if (!$test$plusargs("no_vcd")) begin
+            $dumpfile("build/photonic/known_state.vcd");
+            $dumpvars(0, tb_mapped_known);
+        end
         repeat (8) @(posedge clk);
         #1;
         if ($isunknown(external_outputs))
@@ -124,7 +157,8 @@ module tb_mapped_known;
         if (max_imem_addr < 32'hc0)
             $fatal(1, "mapped stress did not progress: max_pc=%h",
                    max_imem_addr);
-        $dumpoff;
+        if ($test$plusargs("known_only")) $finish;
+        if (!$test$plusargs("no_vcd")) $dumpoff;
         program_timeout = 1024;
         while (dmem[256] != 32'h600d_600d && program_timeout < 15000) begin
             @(posedge clk);
@@ -140,8 +174,11 @@ module tb_mapped_known;
             dmem[270] != 32'h5555_5555 || dmem[271] != 32'h3ff5_5555 ||
             dmem[276] != 32'h4000_0000 || dmem[278] != 0 ||
             dmem[279] != 32'h401c_0000 || dmem[280] != 32'h40 ||
-            dmem[281] != 32'haaaa_aabb || dmem[282] != 32'h0005_105e)
+            dmem[281] != 32'haaaa_aabb || dmem[282] != 32'h0005_105e) begin
+            for (index = 256; index <= 282; index = index + 1)
+                $display("signature[%0d]=%08x", index, dmem[index]);
             $fatal(1, "mapped RV32GC workload signature failure");
+        end
         $display("PASS: mapped RV32GC signatures in %0d cycles",
                  program_timeout);
         $finish;

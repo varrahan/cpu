@@ -23,6 +23,8 @@ def main():
     source_paths = {
         "act4": root / "build/act4/source",
         "softfloat": root / "build/softfloat/source",
+        "praxis": root / "build/praxis/source",
+        "openocd": root / "build/openocd/source",
     }
     for name, revision in lock["sources"].items():
         actual = output(["git", "-C", str(source_paths[name]), "rev-parse", "HEAD"]).strip()

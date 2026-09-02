@@ -61,6 +61,17 @@ module tb_jtag_debug;
             tick(1, 0, sampled); tick(0, 0, sampled);
         end
     endtask
+    task automatic scan_dr32(output logic [31:0] response);
+        logic sampled; integer bitno;
+        begin
+            tick(1, 0, sampled); tick(0, 0, sampled); tick(0, 0, sampled);
+            for (bitno = 0; bitno < 32; bitno++) begin
+                tick(bitno == 31, 0, sampled);
+                response[bitno] = sampled;
+            end
+            tick(1, 0, sampled); tick(0, 0, sampled);
+        end
+    endtask
     task automatic dmi_write(input logic [6:0] address,
                              input logic [31:0] value);
         logic [40:0] response;
@@ -94,12 +105,21 @@ module tb_jtag_debug;
         for (i = 0; i < 64; i++) registers[i] = 0;
         repeat (4) @(posedge core_clk);
         trst_n = 0; #1; trst_n = 1; core_rst_n = 1;
-        repeat (6) tick(1, 0, ignored); tick(0, 0, ignored); set_ir(5'h11);
+        repeat (6) tick(1, 0, ignored); tick(0, 0, ignored);
+        scan_dr32(value);
+        if (value != 32'h0000_0001) $fatal(1, "JTAG IDCODE mismatch: %h", value);
+        set_ir(5'h10); scan_dr32(value);
+        if (value[3:0] != 4'd1 || value[9:4] != 6'd7)
+            $fatal(1, "JTAG DTMCS mismatch: %h", value);
+        set_ir(5'h11);
         dmi_write(7'h10, 32'h8000_0001);
         if (!debug_halted) $fatal(1, "JTAG halt request failed");
         dmi_read(7'h11, value);
         if (value[9:8] != 2'b11 || value[3:0] != 4'd3)
             $fatal(1, "Debug 1.0 dmstatus mismatch: %h", value);
+        dmi_write(7'h17, 32'h0022_0301); repeat (8) @(posedge core_clk);
+        dmi_read(7'h04, value);
+        if (value != 32'h4014_112d) $fatal(1, "abstract misa read failed");
         dmi_write(7'h04, 32'h55aa_1234);
         dmi_write(7'h17, 32'h0023_100a); repeat (8) @(posedge core_clk);
         if (registers[10][31:0] != 32'h55aa_1234)

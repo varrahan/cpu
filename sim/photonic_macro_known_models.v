@@ -1,5 +1,6 @@
 `timescale 1ps/1ps
 
+`ifndef FUNCTIONAL_MACROS
 module P_PC32 (
     input wire clk, input wire rst_n, input wire stall, input wire flush,
     input wire [31:0] redirect_pc, input wire [2:0] instr_length,
@@ -114,3 +115,4 @@ module P_FPU64 (
         end
     end
 endmodule
+`endif
