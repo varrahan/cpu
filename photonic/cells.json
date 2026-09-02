@@ -62,6 +62,7 @@
       "delay_ps": {"typical": 0.05, "maximum": 0.075},
       "maximum_symbol_rate_ghz": 200,
       "maximum_clock_rate_ghz": 200,
+      "regenerates_signal": true,
       "minimum_extinction_db": 10.0,
       "gds_cell": null
     },
