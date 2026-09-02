@@ -4,6 +4,7 @@ module csr_file (
     output reg [31:0] read_data, output reg read_illegal,
     input wire commit_valid, input wire [11:0] commit_addr,
     input wire [31:0] commit_data, input wire retire,
+    output wire [31:0] commit_visible_data,
     input wire fp_flags_valid, input wire [4:0] fp_flags,
     input wire fp_dirty,
     input wire irq_m_software, input wire irq_m_timer,
@@ -71,6 +72,7 @@ module csr_file (
          (irq_s_software | mip_ssip), 1'b0};
 
     assign privilege = current_privilege;
+    assign commit_visible_data = visible_commit_data;
     assign return_pc = {mepc[31:1], 1'b0};
     assign sreturn_pc = {sepc[31:1], 1'b0};
     assign frm_out = frm;
@@ -202,6 +204,8 @@ module csr_file (
             12'h003: visible_commit_data = {24'b0, commit_data[7:0]};
             12'h105, 12'h305: visible_commit_data = tvec_warl(commit_data);
             12'h141, 12'h341: visible_commit_data = {commit_data[31:1], 1'b0};
+            12'h302: visible_commit_data = commit_data & 32'h0000_b7ff;
+            12'h303,
             12'h304: visible_commit_data = commit_data & 32'h0000_0aaa;
             12'h320: visible_commit_data = {29'b0, commit_data[2:0]};
             default: visible_commit_data = commit_data;
