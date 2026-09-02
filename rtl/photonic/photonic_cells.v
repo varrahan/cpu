@@ -58,6 +58,22 @@ module P_TBIN_DFFR (
         else Q <= D;
 endmodule
 
+module P_SPLIT2 (
+    input wire A,
+    output wire Y0,
+    output wire Y1
+);
+    assign Y0 = A;
+    assign Y1 = A;
+endmodule
+
+module P_REGEN2R (
+    input wire A,
+    output wire Y
+);
+    assign Y = A;
+endmodule
+
 module photonic_encode_word (
     input  wire [31:0] data,
     input  wire        valid,
