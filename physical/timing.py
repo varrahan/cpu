@@ -4,6 +4,7 @@
 import argparse
 import json
 import math
+import re
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,10 +28,38 @@ class Trace:
     segment_loss_db: float = 0
     total_loss_db: float = 0
     regenerator_count: int = 0
+    uninserted_regenerator_count: int = 0
 
 
 def load(path):
     return json.loads(Path(path).read_text())
+
+
+def load_sdc(path):
+    text = Path(path).read_text()
+
+    def number(command):
+        match = re.search(rf"{command}\s+([0-9.]+)", text)
+        if not match:
+            raise ValueError(f"missing {command} in {path}")
+        return float(match.group(1)) * 1000  # SDC nanoseconds to picoseconds.
+
+    def ports(command):
+        match = re.search(
+            rf"{command}.*?\[get_ports\s+\{{(.*?)\}}\]", text, re.DOTALL
+        )
+        if not match:
+            raise ValueError(f"missing port list for {command} in {path}")
+        return match.group(1).split()
+
+    return {
+        "period_ps": number(r"create_clock.*?-period"),
+        "uncertainty_ps": number("set_clock_uncertainty"),
+        "input_delay_ps": number("set_input_delay"),
+        "output_delay_ps": number("set_output_delay"),
+        "input_ports": ports("set_input_delay"),
+        "output_ports": ports("set_output_delay"),
+    }
 
 
 def cell_delay(cell_db, cell_type, corner):
@@ -41,7 +70,8 @@ def cell_delay(cell_db, cell_type, corner):
 
 
 def advance(trace, cell_db, corner, delay_ps, loss_db,
-            logic_levels=0, cell_name=None, regenerates_signal=False):
+            logic_levels=0, cell_name=None, regenerates_signal=False,
+            inserted_regenerator=False):
     loss_limit = cell_db["max_unregenerated_loss_db"]
     accumulated_loss = trace.segment_loss_db + loss_db
     regenerators = max(0, math.ceil(accumulated_loss / loss_limit) - 1)
@@ -57,13 +87,20 @@ def advance(trace, cell_db, corner, delay_ps, loss_db,
         segment_loss_db=0 if regenerates_signal else
                         accumulated_loss - regenerators * loss_limit,
         total_loss_db=trace.total_loss_db + loss_db,
-        regenerator_count=trace.regenerator_count + regenerators,
+        regenerator_count=trace.regenerator_count + inserted_regenerator,
+        uninserted_regenerator_count=(
+            trace.uninserted_regenerator_count + regenerators
+        ),
     )
 
 
 def path_analysis(module, cell_db, corner, source_kind,
-                  endpoint_ports=("D",)):
+                  endpoint_ports=("D",), source_ports=None,
+                  output_endpoints=False):
     cells = module["cells"]
+    explicit_support = any(
+        cell["type"] == "P_SPLIT2" for cell in cells.values()
+    )
     combinational = {name: cell for name, cell in cells.items()
                      if cell["type"] not in STATE_CELLS and
                      cell["type"] not in MACRO_CELLS}
@@ -143,7 +180,8 @@ def path_analysis(module, cell_db, corner, source_kind,
                                 source_origins[bit].add(name)
     elif source_kind == "input":
         for port_name, port in module["ports"].items():
-            if port["direction"] == "input" and port_name != "clk":
+            if port["direction"] == "input" and port_name != "clk" and \
+                    (source_ports is None or port_name in source_ports):
                 for bit in port["bits"]:
                     if isinstance(bit, int):
                         arrivals[bit] = Trace(0, 0, port_name)
@@ -168,7 +206,7 @@ def path_analysis(module, cell_db, corner, source_kind,
                     cell_origins.update(source_origins[bit])
                     splitter_levels = (
                         math.ceil(math.log2(fanouts[bit]))
-                        if fanouts[bit] > 1 else 0
+                        if not explicit_support and fanouts[bit] > 1 else 0
                     )
                     splitter = cell_db["cells"]["P_SPLIT2"]
                     candidates.append(advance(
@@ -187,6 +225,7 @@ def path_analysis(module, cell_db, corner, source_kind,
             logic_levels=1,
             cell_name=name,
             regenerates_signal=metadata.get("regenerates_signal", False),
+            inserted_regenerator=cell["type"] == "P_REGEN2R",
         )
         for port, bits in cell["connections"].items():
             if cell["port_directions"].get(port) == "output":
@@ -210,7 +249,7 @@ def path_analysis(module, cell_db, corner, source_kind,
                         continue
                     splitter_levels = (
                         math.ceil(math.log2(fanouts[bit]))
-                        if fanouts[bit] > 1 else 0
+                        if not explicit_support and fanouts[bit] > 1 else 0
                     )
                     splitter = cell_db["cells"]["P_SPLIT2"]
                     endpoints.append((advance(
@@ -232,6 +271,14 @@ def path_analysis(module, cell_db, corner, source_kind,
                 for bit in cell["connections"].get(port, []):
                     if bit in arrivals:
                         endpoints.append((arrivals[bit], f"{name}.{port}"))
+    if output_endpoints:
+        endpoints = [
+            (arrivals[bit], f"top.{name}")
+            for name, port in module["ports"].items()
+            if port["direction"] == "output" and
+            (source_ports is None or name in source_ports)
+            for bit in port["bits"] if bit in arrivals
+        ]
     if not endpoints:
         raise ValueError(
             f"no {source_kind}-to-{','.join(endpoint_ports)} path found")
@@ -258,6 +305,7 @@ def path_analysis(module, cell_db, corner, source_kind,
         "endpoint": endpoint,
         "total_insertion_loss_db": trace.total_loss_db,
         "required_regenerators": trace.regenerator_count,
+        "uninserted_regenerators": trace.uninserted_regenerator_count,
         "final_unregenerated_loss_db": trace.segment_loss_db,
         "path_tail": path[-12:],
         "worst_endpoints": worst_endpoints,
@@ -353,35 +401,71 @@ def self_test():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--netlist", default="build/photonic/top_mapped.json")
+    parser.add_argument("--physical-netlist")
     parser.add_argument("--cells", default="photonic/cells.json")
+    parser.add_argument("--constraints", default="constraints/photonic.sdc")
     parser.add_argument("--output", default="build/physical/timing.json")
-    parser.add_argument("--frequencies-ghz", nargs="+", type=float, default=[100])
+    parser.add_argument("--frequencies-ghz", nargs="+", type=float)
     parser.add_argument("--minimum-frequency-ghz", type=float, default=100)
-    parser.add_argument("--uncertainty-fraction", type=float, default=0.10)
+    parser.add_argument("--uncertainty-fraction", type=float)
     parser.add_argument("--skew-fraction", type=float, default=0.05)
     parser.add_argument("--require-model-pass", action="store_true")
     parser.add_argument("--require-pass", action="store_true")
     args = parser.parse_args()
+    constraints = load_sdc(args.constraints)
+    if args.frequencies_ghz is None:
+        args.frequencies_ghz = [1000 / constraints["period_ps"]]
     if any(frequency <= 0 for frequency in args.frequencies_ghz):
         parser.error("frequencies must be positive")
     if args.minimum_frequency_ghz <= 0:
         parser.error("minimum frequency must be positive")
     if max(args.frequencies_ghz) < args.minimum_frequency_ghz:
         parser.error("at least one evaluated frequency must meet the minimum target")
-    if not 0 <= args.uncertainty_fraction < 1 or not 0 <= args.skew_fraction < 1:
+    if args.uncertainty_fraction is not None and not \
+            0 <= args.uncertainty_fraction < 1:
+        parser.error("uncertainty fraction must be in [0, 1)")
+    if not 0 <= args.skew_fraction < 1:
         parser.error("uncertainty and skew fractions must be in [0, 1)")
-    if args.uncertainty_fraction + args.skew_fraction >= 1:
+    if args.uncertainty_fraction is not None and \
+            args.uncertainty_fraction + args.skew_fraction >= 1:
         parser.error("combined uncertainty and skew must be below one period")
 
     self_test()
     cell_db = load(args.cells)
-    module = load(args.netlist)["modules"]["top"]
+    logical = load(args.netlist)
+    physical = load(args.physical_netlist) if args.physical_netlist else logical
+    logical_module = logical["modules"]["top"]
+    module = physical["modules"]["top"]
     maximum = path_analysis(module, cell_db, "maximum", "latch")
     typical = path_analysis(module, cell_db, "typical", "latch")
-    input_path = path_analysis(module, cell_db, "maximum", "input")
+    input_path = path_analysis(
+        module, cell_db, "maximum", "input",
+        source_ports=set(constraints["input_ports"]),
+    )
+    output_path = path_analysis(
+        module, cell_db, "maximum", "latch",
+        source_ports=set(constraints["output_ports"]), output_endpoints=True,
+    )
     reset_path = path_analysis(module, cell_db, "maximum", "latch",
                                endpoint_ports=("RESET",))
-    tree = clock_tree(module, cell_db, "maximum")
+    tree = clock_tree(logical_module, cell_db, "maximum")
+    physical_clock = physical.get("physical_support", {}).get("clock_tree")
+    if physical_clock:
+        tree.update({
+            "splitter_cells": physical_clock["inserted_splitters"],
+            "inserted_regenerators": physical_clock["inserted_regenerators"],
+            "balanced_binary_levels": physical_clock["max_depth"],
+            "required_path_regenerators":
+                physical_clock["max_path_regenerators"],
+            "maximum_segment_loss_db":
+                physical_clock["maximum_segment_loss_db"],
+        })
+        tree["regenerated_tree_delay_ps"] = (
+            physical_clock["max_depth"] *
+            cell_db["cells"]["P_SPLIT2"]["delay_ps"]["maximum"] +
+            physical_clock["max_path_regenerators"] *
+            cell_db["cells"]["P_REGEN2R"]["delay_ps"]["maximum"]
+        )
     setup = max(
         *(cell_db["cells"][name]["setup_ps"] for name in STATE_CELLS),
         *(cell_db["cells"][name]["interface_setup_ps"]
@@ -408,16 +492,20 @@ def main():
             "latency_cycles": cell_db["cells"][name]["latency_cycles"],
         } for name in MACRO_CELLS
     }
-    margin_fraction = args.uncertainty_fraction + args.skew_fraction
-
     targets = []
     for frequency in args.frequencies_ghz:
         period = 1000 / frequency
-        uncertainty = period * args.uncertainty_fraction
+        uncertainty = constraints["uncertainty_ps"] if \
+            args.uncertainty_fraction is None else \
+            period * args.uncertainty_fraction
         skew = period * args.skew_fraction
         required = maximum["delay_ps"] + setup + uncertainty + skew
         reset_required = (reset_path["delay_ps"] + reset_recovery +
                           uncertainty + skew)
+        input_required = (constraints["input_delay_ps"] + input_path["delay_ps"] +
+                          setup + uncertainty + skew)
+        output_required = (output_path["delay_ps"] +
+                           constraints["output_delay_ps"] + uncertainty + skew)
         targets.append({
             "frequency_ghz": frequency,
             "period_ps": period,
@@ -428,6 +516,10 @@ def main():
             "logic_meets_model_timing": required <= period,
             "predicate_reset_required_ps": reset_required,
             "predicate_reset_meets_model_timing": reset_required <= period,
+            "input_interface_required_ps": input_required,
+            "input_interface_meets_model_timing": input_required <= period,
+            "output_interface_required_ps": output_required,
+            "output_interface_meets_model_timing": output_required <= period,
             "bare_latch_required_ps": cq + setup + uncertainty + skew,
             "bare_latch_meets_model_timing":
                 cq + setup + uncertainty + skew <= period,
@@ -461,24 +553,33 @@ def main():
         target["target_pass"] = (
             target["logic_meets_model_timing"] and
             target["predicate_reset_meets_model_timing"] and
+            target["input_interface_meets_model_timing"] and
+            target["output_interface_meets_model_timing"] and
             target["clock_tree_meets_target_rate"] and
             target["combinational_cells_meet_target_rate"] and
             target["macros_meet_target_rate"] and
             target["pulse_fits_period"]
+            and all(path["uninserted_regenerators"] == 0 for path in (
+                maximum, reset_path, input_path, output_path
+            ))
         )
 
     output = {
         "model_status": cell_db["status"],
         "timing_is_signoff": cell_db["status"] == "vendor-characterized",
         "minimum_clock_frequency_ghz": args.minimum_frequency_ghz,
+        "constraints": constraints,
+        "physical_support": physical.get("physical_support"),
         "maximum_latch_to_latch": maximum,
         "typical_latch_to_latch": typical,
         "maximum_input_to_latch": input_path,
+        "maximum_latch_to_output": output_path,
         "maximum_latch_to_predicate_reset": reset_path,
-        "estimated_model_fmax_ghz":
-            1000 * (1 - margin_fraction) /
-            max(maximum["delay_ps"] + setup,
-                reset_path["delay_ps"] + reset_recovery),
+        "estimated_model_fmax_ghz": 1000 / max(
+            maximum["delay_ps"] + setup + constraints["uncertainty_ps"],
+            reset_path["delay_ps"] + reset_recovery +
+            constraints["uncertainty_ps"],
+        ) / (1 + args.skew_fraction),
         "clock_tree": tree,
         "physical_macros": macros,
         "physical_memory_macros": {
