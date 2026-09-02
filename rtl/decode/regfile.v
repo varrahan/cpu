@@ -32,4 +32,12 @@ module regfile (
     assign rs2_data = (rs2_addr == 5'b0) ? 32'b0 :
                       (wr_en && rd_addr == rs2_addr) ? rd_data : memory_rdata[63:32];
     assign debug_rdata = debug_addr == 0 ? 0 : memory_rdata[31:0];
+`ifdef FORMAL
+    always @(*) begin
+        if (rs1_addr == 0) assert(rs1_data == 0);
+        if (rs2_addr == 0) assert(rs2_data == 0);
+        if (debug_addr == 0) assert(debug_rdata == 0);
+        if (memory_we) assert(memory_waddr != 0);
+    end
+`endif
 endmodule
