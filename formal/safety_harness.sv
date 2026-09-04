@@ -16,7 +16,7 @@ module dcache_harness;
     (* gclk *) reg clk;
     (* anyseq *) reg rst_n;
 
-    dcache dut (.clk(clk), .rst_n(rst_n));
+    dcache dut (.clk(clk), .rst_n(rst_n), .cpu_cacheable(1'b1));
 endmodule
 
 module mmu_harness;

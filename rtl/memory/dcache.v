@@ -4,6 +4,7 @@ module dcache (
     input  wire        cpu_valid,
     input  wire        cpu_write,
     input  wire        cpu_double,
+    input  wire        cpu_cacheable,
     input  wire        cpu_amo,
     input  wire [4:0]  cpu_amo_op,
     input  wire [31:0] cpu_addr,
@@ -41,6 +42,8 @@ module dcache (
     reg [23:0] fill_tag;
     reg [1:0]  fill_word;
     reg [3:0]  fill_required_mask;
+    reg        fill_cacheable;
+    reg        fill_double;
     reg [31:0] store_addr;
     reg [31:0] store_wdata;
     reg [3:0]  store_be;
@@ -52,19 +55,22 @@ module dcache (
     reg [31:0] amo_addr;
     reg [31:0] amo_wdata;
     reg [4:0]  amo_op;
+    reg        amo_sc_failed;
     reg        reservation_valid;
     reg [31:2] reservation_addr;
     reg [31:0] complete_rdata;
+    reg [31:0] complete_rdata_high;
     reg        complete_error;
     wire [3:0] cpu_index = cpu_addr[7:4];
     wire [1:0] cpu_word  = cpu_addr[3:2];
     wire [23:0] tag_rdata;
     wire [63:0] data_rdata;
-    wire       hit = valid[cpu_index] && tag_rdata == cpu_addr[31:8];
+    wire       hit = cpu_cacheable && valid[cpu_index] &&
+                     tag_rdata == cpu_addr[31:8];
     wire load_zero_write = state == LOAD_REQ && !mem_req_allow &&
                            !fill_required_mask[fill_word];
-    wire load_data_write = state == LOAD_WAIT && mem_rsp_valid &&
-                           !mem_rsp_error;
+    wire load_data_write = state == LOAD_WAIT && fill_cacheable &&
+                           mem_rsp_valid && !mem_rsp_error;
     wire store_data_write = state == STORE_WAIT && mem_rsp_valid &&
                             !mem_rsp_error && store_hit;
     wire fill_array_write = load_zero_write || load_data_write;
@@ -90,7 +96,8 @@ module dcache (
 
     assign cpu_rdata = state == COMPLETE ? complete_rdata
                                          : data_rdata[31:0];
-    assign cpu_rdata64 = data_rdata;
+    assign cpu_rdata64 = state == COMPLETE && !fill_cacheable
+                         ? {complete_rdata_high, complete_rdata} : data_rdata;
     assign cpu_ready = cpu_valid &&
                        ((state == IDLE && !cpu_write && !cpu_amo && hit) ||
                         state == COMPLETE);
@@ -104,7 +111,7 @@ module dcache (
                            : fill_base + {28'b0, fill_word, 2'b00};
     assign mem_req_wdata = state == AMO_REQ ? amo_wdata : store_wdata;
     assign mem_req_be    = state == AMO_REQ ? 4'b1111 : store_be;
-    assign mem_req_amo   = state == AMO_REQ;
+    assign mem_req_amo   = state == AMO_REQ && !amo_sc_failed;
     assign mem_req_amo_op = amo_op;
     assign mem_rsp_ready = state == LOAD_WAIT || state == STORE_WAIT ||
                            state == AMO_WAIT;
@@ -118,6 +125,8 @@ module dcache (
             fill_tag <= 0;
             fill_word <= 0;
             fill_required_mask <= 0;
+            fill_cacheable <= 0;
+            fill_double <= 0;
             store_addr <= 0;
             store_wdata <= 0;
             store_be <= 0;
@@ -129,9 +138,11 @@ module dcache (
             amo_addr <= 0;
             amo_wdata <= 0;
             amo_op <= 0;
+            amo_sc_failed <= 0;
             reservation_valid <= 0;
             reservation_addr <= 0;
             complete_rdata <= 0;
+            complete_rdata_high <= 0;
             complete_error <= 0;
         end else begin
             if (reservation_invalidate) reservation_valid <= 0;
@@ -142,13 +153,17 @@ module dcache (
                         if (cpu_amo_op == 5'b00011 &&
                             (!reservation_valid ||
                              reservation_addr != cpu_addr[31:2])) begin
-                            complete_rdata <= 1;
+                            amo_addr <= cpu_addr;
+                            amo_wdata <= cpu_wdata;
+                            amo_op <= cpu_amo_op;
+                            amo_sc_failed <= 1;
                             reservation_valid <= 0;
-                            state <= COMPLETE;
+                            state <= AMO_REQ;
                         end else begin
                             amo_addr <= cpu_addr;
                             amo_wdata <= cpu_wdata;
                             amo_op <= cpu_amo_op;
+                            amo_sc_failed <= 0;
                             valid[cpu_index] <= 0;
                             if (cpu_amo_op != 5'b00010)
                                 reservation_valid <= 0;
@@ -167,13 +182,18 @@ module dcache (
                         reservation_valid <= 0;
                         state <= STORE_REQ;
                     end else if (cpu_valid && !hit) begin
-                        fill_base  <= {cpu_addr[31:4], 4'b0};
+                        fill_base  <= cpu_cacheable
+                                      ? {cpu_addr[31:4], 4'b0}
+                                      : {cpu_addr[31:2], 2'b0};
                         fill_index <= cpu_index;
                         fill_tag   <= cpu_addr[31:8];
                         fill_word  <= 0;
-                        fill_required_mask <= (4'b0001 << cpu_word) |
-                                              (cpu_double
-                                               ? (4'b0010 << cpu_word) : 0);
+                        fill_required_mask <= cpu_cacheable
+                            ? (4'b0001 << cpu_word) |
+                              (cpu_double ? (4'b0010 << cpu_word) : 0)
+                            : (cpu_double ? 4'b0011 : 4'b0001);
+                        fill_cacheable <= cpu_cacheable;
+                        fill_double <= cpu_double;
                         valid[cpu_index] <= 0;
                         state <= LOAD_REQ;
                     end
@@ -195,6 +215,18 @@ module dcache (
                     if (mem_rsp_error) begin
                         complete_error <= 1;
                         state <= COMPLETE;
+                    end else if (!fill_cacheable) begin
+                        if (fill_word == 0) begin
+                            complete_rdata <= mem_rsp_rdata;
+                        end else begin
+                            complete_rdata_high <= mem_rsp_rdata;
+                        end
+                        if (fill_double && fill_word == 0) begin
+                            fill_word <= 1;
+                            state <= LOAD_REQ;
+                        end else begin
+                            state <= COMPLETE;
+                        end
                     end else begin
                         if (fill_word == 3) begin
                             valid[fill_index] <= 1;
@@ -228,7 +260,8 @@ module dcache (
                 end else if (mem_req_ready) state <= AMO_WAIT;
                 AMO_WAIT: if (mem_rsp_valid) begin
                     complete_error <= mem_rsp_error;
-                    complete_rdata <= amo_op == 5'b00011 ? 0 : mem_rsp_rdata;
+                    complete_rdata <= amo_sc_failed ? 1 :
+                                      amo_op == 5'b00011 ? 0 : mem_rsp_rdata;
                     if (!mem_rsp_error && amo_op == 5'b00010) begin
                         reservation_valid <= 1;
                         reservation_addr <= amo_addr[31:2];
@@ -253,7 +286,7 @@ module dcache (
             assert($stable({mem_req_write, mem_req_addr, mem_req_wdata,
                             mem_req_be, mem_req_amo, mem_req_amo_op}));
         end
-        if (state == AMO_REQ && amo_op == 5'b00011 &&
+        if (state == AMO_REQ && amo_op == 5'b00011 && !amo_sc_failed &&
             $past(state != AMO_REQ))
             assert($past(state == IDLE && cpu_valid && cpu_amo &&
                          cpu_amo_op == 5'b00011 && reservation_valid &&
@@ -261,8 +294,7 @@ module dcache (
         if ($past(rst_n && state == IDLE && cpu_valid && cpu_amo &&
                   cpu_amo_op == 5'b00011 &&
                   (!reservation_valid || reservation_addr != cpu_addr[31:2])))
-            assert(state == COMPLETE && complete_rdata == 1 &&
-                   !mem_req_valid);
+            assert(state == AMO_REQ && amo_sc_failed && !mem_req_amo);
         if ($past(rst_n && state == LOAD_WAIT && mem_rsp_valid &&
                   mem_rsp_error))
             assert(valid[$past(fill_index)] == 0);

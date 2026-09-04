@@ -18,7 +18,8 @@ module icache (
 endmodule
 
 module dcache (
-    input wire clk, rst_n, cpu_valid, cpu_write, cpu_double, cpu_amo,
+    input wire clk, rst_n, cpu_valid, cpu_write, cpu_double, cpu_cacheable,
+    input wire cpu_amo,
     input wire [4:0] cpu_amo_op, input wire [31:0] cpu_addr, cpu_wdata,
     input wire [63:0] cpu_wdata64, input wire [3:0] cpu_be,
     output wire [31:0] cpu_rdata, output wire [63:0] cpu_rdata64,

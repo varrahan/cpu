@@ -8,6 +8,7 @@ module top (
     input  wire        irq_s_timer,
     input  wire        irq_s_external,
     input  wire        nmi,
+    input  wire [63:0] mtime,
     input  wire        debug_req,
     input  wire        debug_resume,
     input  wire        debug_reg_valid,
@@ -111,7 +112,7 @@ module top (
     wire debug_enter, debug_resume_fire;
     reg wfi_sleep;
     reg [31:0] wfi_resume_pc;
-    wire wfi_wake_trap;
+    wire wfi_wake, wfi_wake_trap, wfi_wake_resume;
 
     (* ASYNC_REG = "TRUE" *) reg [1:0] irq_m_software_sync;
     (* ASYNC_REG = "TRUE" *) reg [1:0] irq_m_timer_sync;
@@ -152,12 +153,6 @@ module top (
     wire        icache_cancel;
     wire        icache_need_next_raw = if_pc[1] &&
                                         icache_rdata[17:16] == 2'b11;
-    wire        icache_instruction32 = if_pc[1]
-                                        ? icache_rdata[17:16] == 2'b11
-                                        : icache_rdata[1:0] == 2'b11;
-    wire [3:0]  if_pmp_size = boundary_translate ? 4'd2 :
-                                  (icache_current_ready && icache_instruction32
-                                   ? 4'd4 : 4'd2);
     wire        icache_invalidate;
     wire        if_pmp_allow_main, if_pmp_allow_next, imem_fill_allow;
 
@@ -168,6 +163,9 @@ module top (
     wire boundary_instruction = if_pc[11:0] == 12'hffe;
     wire boundary_translate = boundary_instruction && icache_current_ready &&
                               icache_need_next_raw;
+    wire if_need_next_pmp = icache_current_ready && icache_need_next_raw;
+    wire [31:0] if_next_pmp_addr = boundary_translate
+                                   ? immu_next_paddr : immu_paddr + 2;
     wire instruction_translation_fault = immu_page_fault || immu_access_fault ||
         (boundary_translate &&
          (immu_next_page_fault || immu_next_access_fault));
@@ -185,7 +183,7 @@ module top (
     wire instruction_pmp_fault = instruction_translation_ready &&
         !instruction_translation_fault &&
         (!if_pmp_allow_main ||
-         (boundary_translate && !if_pmp_allow_next));
+         (if_need_next_pmp && !if_pmp_allow_next));
     wire if_fetch_ready = fetch_issue_window && instruction_translation_ready &&
         (instruction_translation_fault || instruction_pmp_fault ||
          icache_ready);
@@ -236,7 +234,7 @@ module top (
 
     pmp_checker u_if_pmp (
         .addr(immu_paddr),
-        .size(if_pmp_size),
+        .size(4'd2),
         .privilege(csr_privilege), .access_read(1'b0),
         .access_write(1'b0), .access_execute(1'b1),
         .pmpcfg0(csr_pmpcfg0), .pmpaddr0(csr_pmpaddr0),
@@ -245,7 +243,7 @@ module top (
     );
 
     pmp_checker u_if_next_pmp (
-        .addr(immu_next_paddr), .size(4'd2),
+        .addr(if_next_pmp_addr), .size(4'd2),
         .privilege(csr_privilege), .access_read(1'b0),
         .access_write(1'b0), .access_execute(1'b1),
         .pmpcfg0(csr_pmpcfg0), .pmpaddr0(csr_pmpaddr0),
@@ -344,14 +342,13 @@ module top (
                                   instruction_pmp_fault;
             id_fetch_cause <= instruction_page_fault
                               ? CAUSE_INST_PAGE : CAUSE_INST_ACCESS;
-            id_fetch_tval <= if_pc;
+            id_fetch_tval <= ((boundary_translate &&
+                               (immu_next_page_fault ||
+                                immu_next_access_fault)) ||
+                              (if_need_next_pmp && !if_pmp_allow_next))
+                             ? if_pc + 2 : if_pc;
         end
     end
-
-    // A redirect may safely let an outstanding physical-line fill complete;
-    // only the response is stale, not the cache line. Avoid broadcasting the
-    // retirement redirect through every cache-data latch.
-    assign icache_cancel = icache_error && !mem_hold && !stall_haz;
 
     // Decode
     wire [31:0] id_raw_instr = id_encoded_instr;
@@ -524,7 +521,7 @@ module top (
         .id_uses_rs1 (id_valid && id_uses_rs1),
         .id_uses_rs2 (id_valid && id_uses_rs2),
         .ex_rd       (ex_rd),
-        .ex_mem_read (ex_valid && ex_mem_read),
+        .ex_mem_read (ex_valid && (ex_mem_read || ex_amo)),
         .stall       (stall_haz),
         .flush_id_ex (flush_id_ex_haz)
     );
@@ -701,6 +698,7 @@ module top (
     reg [2:0]  mem_instr_length;
     reg        mem_valid;
     reg [31:0] mem_alu_result;
+    reg [31:0] mem_vaddr;
     reg [31:0] mem_rs2_data;
     reg [4:0]  mem_rd;
     reg [2:0]  mem_funct3;
@@ -734,7 +732,8 @@ module top (
         .ex_rs1        (ex_rs1_addr),
         .ex_rs2        (ex_rs2_addr),
         .mem_rd        (mem_rd),
-        .mem_reg_write (mem_valid && mem_reg_write && !mem_exception),
+        .mem_reg_write (mem_valid && mem_reg_write && !mem_exception &&
+                        !mem_mem_read && !mem_amo),
         .wb_rd         (wb_rd),
         .wb_reg_write  (wb_reg_write_effective),
         .fwd_a         (fwd_a),
@@ -955,6 +954,7 @@ module top (
                           !data_pmp_allow;
 
     wire [31:0] csr_read_data;
+    wire [31:0] csr_read_modify_data;
     wire        csr_read_illegal;
     wire [31:0] csr_source = ex_csr_imm
                              ? {27'b0, ex_instr[19:15]} : fwd_rs1;
@@ -962,8 +962,8 @@ module top (
                                (ex_csr_cmd == 2'b01 || csr_source != 0);
     wire [31:0] csr_write_data_ex = ex_csr_cmd == 2'b01 ? csr_source :
                                     ex_csr_cmd == 2'b10
-                                        ? csr_read_data | csr_source
-                                        : csr_read_data & ~csr_source;
+                                        ? csr_read_modify_data | csr_source
+                                        : csr_read_modify_data & ~csr_source;
 
     wire execute_exception = ex_exception ||
                              (ex_valid && ex_csr_en && csr_read_illegal) ||
@@ -1033,8 +1033,7 @@ module top (
     wire [31:0] mem_store_wdata, mem_load_rdata;
     wire [3:0]  mem_store_be;
     wire        mem_misaligned_unused;
-    assign mem_forward_data = mem_mem_read ? mem_load_rdata :
-                              mem_amo ? dcache_cpu_rdata : mem_alu_result;
+    assign mem_forward_data = mem_alu_result;
 
     memory_stage u_memory_format (
         .addr        (mem_alu_result[1:0]),
@@ -1078,6 +1077,8 @@ module top (
         .cpu_valid     (dcache_cpu_valid),
         .cpu_write     (dcache_cpu_write),
         .cpu_double    (dcache_cpu_double),
+        .cpu_cacheable (mem_alu_result < 32'h0200_0000 ||
+                        mem_alu_result >= 32'h2000_0000),
         .cpu_amo       (mem_amo),
         .cpu_amo_op    (mem_amo_op),
         .cpu_addr      (mem_alu_result),
@@ -1166,19 +1167,33 @@ module top (
                             dcache_cpu_error;
     wire exception_take = mem_valid && !mem_hold &&
                           (mem_exception || mem_access_error);
+    wire retire_event = mem_valid && !mem_hold && !exception_take;
     wire [31:0] exception_cause = mem_exception ? mem_exception_cause :
                              (mem_mem_write || mem_fp_store ||
                               (mem_amo && mem_amo_op != 5'b00010))
                              ? CAUSE_STORE_ACCESS : CAUSE_LOAD_ACCESS;
     wire [31:0] exception_tval = mem_exception ? mem_exception_tval
-                                               : mem_alu_result;
+                                               : mem_vaddr;
     wire csr_interrupt_pending;
+    wire csr_wfi_wake_pending;
     wire [31:0] csr_interrupt_cause;
     wire interrupt_take = mem_valid && !mem_hold && !exception_take &&
                           !mem_mret && !mem_sret && !mem_fence_i &&
                           !mem_sfence_vma && !debug_req &&
                           csr_interrupt_pending;
-    assign wfi_wake_trap = wfi_sleep && csr_interrupt_pending;
+    assign wfi_wake = wfi_sleep && csr_wfi_wake_pending;
+    assign wfi_wake_trap = wfi_wake && csr_interrupt_pending;
+    assign wfi_wake_resume = wfi_wake && !csr_interrupt_pending;
+    // Cancel directly from the registered redirect causes so the full redirect
+    // priority tree does not feed every cache-state latch.
+    assign icache_cancel = branch_mispredict_raw ||
+                           (mem_valid &&
+                            (mem_exception || mem_mret || mem_sret ||
+                             mem_sfence_vma || mem_wfi ||
+                             csr_interrupt_pending || debug_req)) ||
+                           dcache_cpu_error || debug_enter ||
+                           debug_resume_fire || wfi_wake ||
+                           (icache_error && !mem_hold && !stall_haz);
     wire debug_retire_boundary = mem_valid && !mem_hold && !exception_take;
     debug_control u_debug (
         .clk(clk), .rst_n(rst_n), .debug_req(debug_req),
@@ -1205,7 +1220,7 @@ module top (
     assign sfence_take = mem_valid && mem_sfence_vma && !trap_take &&
                          !debug_enter && !mem_hold;
     wire wfi_enter = mem_valid && mem_wfi && !trap_take && !debug_enter &&
-                     !mem_hold && !csr_interrupt_pending;
+                     !mem_hold && !csr_wfi_wake_pending;
     wire wfi_debug_wake = wfi_sleep && debug_req;
     wire csr_commit_valid = mem_valid && mem_csr_en &&
                             mem_csr_write_intent && !exception_take && !mem_hold;
@@ -1229,15 +1244,17 @@ module top (
         .read_addr         (ex_instr[31:20]),
         .read_write_intent (csr_write_intent_ex),
         .read_data         (csr_read_data),
+        .read_modify_data  (csr_read_modify_data),
         .read_illegal      (csr_read_illegal),
         .commit_valid      (csr_commit_valid),
         .commit_addr       (mem_csr_addr),
         .commit_data       (mem_csr_wdata),
         .commit_visible_data(csr_commit_visible_data),
-        .retire            (wb_valid),
+        .retire            (retire_event),
         .fp_flags_valid    (fp_flags_commit),
         .fp_flags          (mem_fp_flags),
         .fp_dirty          (fp_dirty_commit),
+        .mtime             (mtime),
         .irq_m_software    (irq_m_software_sync[1]),
         .irq_m_timer       (irq_m_timer_sync[1]),
         .irq_m_external    (irq_m_external_sync[1]),
@@ -1258,6 +1275,7 @@ module top (
         .fp_enabled        (csr_fp_enabled),
         .interrupt_pending (csr_interrupt_pending),
         .interrupt_cause   (csr_interrupt_cause),
+        .wfi_wake_pending  (csr_wfi_wake_pending),
         .privilege         (csr_privilege),
         .data_privilege    (csr_data_privilege),
         .pmpcfg0_out       (csr_pmpcfg0),
@@ -1282,7 +1300,7 @@ module top (
                 wfi_sleep <= 1;
                 wfi_resume_pc <= mem_next_pc;
             end
-            if (wfi_wake_trap || wfi_debug_wake) wfi_sleep <= 0;
+            if (wfi_wake || wfi_debug_wake) wfi_sleep <= 0;
         end
     end
 
@@ -1290,13 +1308,14 @@ module top (
     assign retirement_redirect_fire = trap_take || debug_enter ||
                            debug_resume_fire || mret_take || sret_take ||
                            fence_i_take || sfence_take || wfi_enter ||
-                           wfi_debug_wake;
+                           wfi_wake_resume || wfi_debug_wake;
     assign redirect_fire = retirement_redirect_fire || branch_mispredict_ex;
     assign redirect_pc = trap_take ? csr_trap_vector :
                          debug_resume_fire ? debug_dpc :
                          mret_take ? csr_return_pc :
                          sret_take ? csr_sreturn_pc :
                          wfi_enter ? mem_next_pc :
+                         wfi_wake_resume ? wfi_resume_pc :
                          wfi_debug_wake ? wfi_resume_pc :
                          fence_i_take ? mem_pc + mem_instr_length
                          : sfence_take ? mem_pc + mem_instr_length
@@ -1306,7 +1325,8 @@ module top (
     always @(posedge clk) begin
         if (!rst_n || trap_take || debug_enter || debug_resume_fire ||
             mret_take || sret_take ||
-            fence_i_take || sfence_take || wfi_enter || wfi_debug_wake) begin
+            fence_i_take || sfence_take || wfi_enter || wfi_wake_resume ||
+            wfi_debug_wake) begin
             mem_valid <= 0;
             mem_exception <= 0;
         end else if (mem_hold) begin
@@ -1329,6 +1349,7 @@ module top (
 `endif
             mem_instr_length <= 4;
             mem_alu_result <= 0;
+            mem_vaddr <= 0;
             mem_rs2_data <= 0;
             mem_rd <= 0;
             mem_funct3 <= 0;
@@ -1370,6 +1391,7 @@ module top (
             mem_instr_length     <= ex_instr_length;
             mem_alu_result       <= data_access_ex ? dmmu_paddr
                                                     : execute_result;
+            mem_vaddr            <= alu_result;
             mem_rs2_data         <= fwd_rs2;
             mem_rd               <= ex_rd;
             mem_funct3           <= ex_funct3;

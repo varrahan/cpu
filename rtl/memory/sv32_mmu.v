@@ -92,7 +92,8 @@ module sv32_mmu (
     end
 
     assign resp_ready = req_valid &&
-                        (!translation_enabled || tlb_hit || state == COMPLETE);
+                        (!translation_enabled || tlb_hit ||
+                         (state == COMPLETE && vaddr == saved_vaddr));
     assign paddr = !translation_enabled ? vaddr :
                    tlb_hit ? tlb_paddr : result_paddr;
     assign page_fault = translation_enabled &&
