@@ -252,8 +252,7 @@ ACT4_IMAGE = ghcr.io/riscv/act4-build:act4@sha256:6c1967e40bb17ef23b9a1755298821
 ACT4_WORK = work/photonic
 ACT4_CONFIG_DIR = $(ACT4_SRC)/config/photonic-rv32gc
 ACT4_CONFIG = config/photonic-rv32gc/test_config.yaml
-ACT4_EXTENSIONS = I,M,F,D,Zicsr,Zifencei,Zca,Zcf,Zcd,Zaamo,Zalrsc
-ACT4_ELFS = $(ACT4_SRC)/$(ACT4_WORK)/photonic-rv32gc/elfs/rv32i
+ACT4_ELFS = $(ACT4_SRC)/$(ACT4_WORK)/photonic-rv32gc/elfs
 ACT4_HEX = $(ACT4_DIR)/hex-rv32gc
 ACT4_JOBS ?= 8
 RVFI_INST_LIMIT ?= 100000
@@ -304,13 +303,40 @@ act4-config: act4-source
 	mkdir -p $(ACT4_CONFIG_DIR)
 	cp sim/act4/test_config.yaml sim/act4/photonic-rv32gc.yaml $(ACT4_CONFIG_DIR)/
 	ln -sfn ../sail/sail-rv32-max/link.ld $(ACT4_CONFIG_DIR)/link.ld
-	ln -sfn ../sail/sail-rv32-max/rvmodel_macros.h $(ACT4_CONFIG_DIR)/rvmodel_macros.h
-	ln -sfn ../sail/sail-rv32-max/sail.json $(ACT4_CONFIG_DIR)/sail.json
+	cp --remove-destination $(ACT4_SRC)/config/sail/sail-rv32-max/rvmodel_macros.h \
+		$(ACT4_CONFIG_DIR)/rvmodel_macros.h
+	sed -i -e 's/RVMODEL_TIMER_INT_SOON_DELAY 100/RVMODEL_TIMER_INT_SOON_DELAY 1000/' \
+		-e 's/RVMODEL_MAX_CYCLES_PER_TIMER_TICK 1/RVMODEL_MAX_CYCLES_PER_TIMER_TICK 16/' \
+		$(ACT4_CONFIG_DIR)/rvmodel_macros.h
+	cp --remove-destination $(ACT4_SRC)/config/sail/sail-RVI20U32/sail.json \
+		$(ACT4_CONFIG_DIR)/sail.json
+	sed -i -e 's/"writable_fiom": true/"writable_fiom": false/' \
+		-e '/"scounteren_writable_bits": {/,/}/{s/"value": "0x0"/"value": "0x7"/;}' \
+		-e '/"mcounteren_writable_bits": {/,/}/{s/"value": "0x0"/"value": "0x7"/;}' \
+		-e '/"stvec": {/,/"medeleg": {/s/"supported": false/"supported": true/' \
+		-e 's/0x0000_0000_000c_b3FF/0x0000_0000_0000_b3FF/' \
+		-e 's/"value": "0x0000_2222"/"value": "0x0000_0222"/' \
+		-e 's/"software_breakpoint": true/"software_breakpoint": false/' \
+		-e 's/"hardware_breakpoint": true/"hardware_breakpoint": false/' \
+		-e 's/"count": 0/"count": 16/' \
+		-e 's/"usable_count": 0/"usable_count": 4/' \
+		-e '/"load_store": {/{n;s/"None": null/"Some": "AlignmentException"/;}' \
+		-e '/"amo": {/{n;s/"Some": "AccessFault"/"Some": "AlignmentException"/;}' \
+		-e 's/"lrsc": "AccessFault"/"lrsc": "AlignmentException"/' \
+		-e 's/"atomic_support": "AMOCASQ"/"atomic_support": "AMOArithmetic"/' \
+		-e 's/"fflags_dirty_policy": "Fflags_Dirty_Precise"/"fflags_dirty_policy": "Fflags_Dirty_Instruction"/' \
+		-e '/"S": {/,/}/{s/"supported": false/"supported": true/;}' \
+		-e '/"U": {/,/}/{s/"supported": false/"supported": true/;}' \
+		-e '/"Zihpm": {/,/}/{s/"supported": true/"supported": false/;}' \
+		-e '/"Svadu": {/,/}/{s/"supported": false/"supported": true/;}' \
+		-e '/"Svbare": {/,/}/{s/"supported": false/"supported": true/;}' \
+		-e '/"Sv32": {/,/}/{s/"supported": false/"supported": true/;}' \
+		$(ACT4_CONFIG_DIR)/sail.json
 
 act4-elfs: act4-config
 	docker run --rm -v $(abspath $(ACT4_SRC)):/act4 -w /act4 \
 		$(ACT4_IMAGE) make CONFIG_FILES=$(ACT4_CONFIG) \
-		WORKDIR=$(ACT4_WORK) EXTENSIONS=$(ACT4_EXTENSIONS) FAST=True -j8
+		WORKDIR=$(ACT4_WORK) FAST=True -j8
 
 act4-compile:
 	mkdir -p $(ACT4_VERILATOR_DIR)
@@ -322,7 +348,7 @@ act4-hex: act4-elfs
 	mkdir -p $(ACT4_HEX)
 	docker run --rm -v $(abspath $(ACT4_SRC)):/act4:ro \
 		-v $(abspath $(ACT4_HEX)):/hex $(ACT4_IMAGE) sh -c \
-		'find /act4/$(ACT4_WORK)/photonic-rv32gc/elfs/rv32i -name "*.elf" | while read elf; do \
+		'find /act4/$(ACT4_WORK)/photonic-rv32gc/elfs -name "*.elf" | while read elf; do \
 			ext=$$(basename "$$(dirname "$$elf")"); name=$$(basename "$$elf" .elf); \
 			mkdir -p "/hex/$$ext"; \
 		riscv64-unknown-elf-objcopy -O verilog --verilog-data-width=1 \
@@ -348,7 +374,7 @@ act4-official: act4-compile act4-hex
 	status=$$?; cat $(ACT4_DIR)/official-results.log; \
 	total=$$(wc -l <$(ACT4_DIR)/official-results.log); \
 	passed=$$(grep -c '^PASS ' $(ACT4_DIR)/official-results.log || true); \
-	echo "ACT4 supported ISA: $$passed/$$total passed"; \
+	echo "ACT4 configured ISA: $$passed/$$total passed"; \
 	exit $$status
 
 softfloat-source:

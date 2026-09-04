@@ -36,9 +36,10 @@ make release-check       # require timing and physical tapeout signoff
 
 The external instruction and data ports each use a one-outstanding-request
 ready/valid protocol. The D-cache is write-through/no-write-allocate; both
-caches fill four 32-bit beats per 16-byte line. At the physical boundary each
-32-bit value is represented by true/false optical rails on the 32-channel WDM
-plan in `photonic/wavelengths.json`.
+caches fill four 32-bit beats per 16-byte line. The intended physical boundary
+uses true/false optical rails on the 32-channel WDM plan in
+`photonic/wavelengths.json`; the current generated netlist remains single-rail,
+and preflight blocks release until dual-rail expansion and WDM routing exist.
 
 The end-to-end regression compiles `sim/programs/rv32gc_stress.c` and its ISA
 sweep with Clang/LLVM. It executes sorting, CRC32, matrix multiplication, GCD,
@@ -48,13 +49,15 @@ currently confirms 117 required mnemonics and 160 emitted compressed
 instructions before the testbench checks its integer, atomic, CSR, and
 floating-point signatures.
 
-The current qualification results include all 281 supported ACT4 ISA tests,
-52,464 Sail-matched retirements, 6,111 Berkeley SoftFloat comparisons, an
+The current ACT4 artifact passes all 660 tests selected by the complete
+configured architecture, including privileged, interrupt, PMP, and Sv32
+coverage. Other recorded results include 56,989 Sail-matched retirements,
+6,111 Berkeley SoftFloat comparisons, an
 OpenOCD-driven external debug session, and a real PraxisOS Sv32 supervisor/user
 boot. Source revisions and the ACT4 container digest are pinned in
 `tools.lock.json`.
 
-The optimized map uses 16,383 photonic LUT3s, 3,402 soft state cells, and six
+The optimized map uses 16,834 photonic LUT3s, 3,423 soft state cells, and six
 parameterized photonic memory macros. Register files and cache tag/data banks
 are inferred as memory IP instead of LUT read muxes; `physical/netlist_contract.py`
 enforces the memory shapes, single-driver connectivity, and a 17,000-LUT
@@ -67,15 +70,15 @@ including memory macros and validity-gated payloads, resets deterministically.
 mapped nets, and any X/Z observed on mapped leaf-cell signals or CPU outputs
 after reset. The core contains no tri-state buses.
 
-`physical/preflight.py --require-release` fails until real GDS cells, six
-layout files, coupling tolerances, and a clean extracted `physical/signoff.json`
-are present. This prevents research target budgets from being presented as
-PIC signoff.
+`physical/preflight.py --require-release` fails until dual-rail expansion, WDM
+routing, real GDS cells, six layout files, coupling tolerances, and a clean
+extracted `physical/signoff.json` are present. This prevents research target
+budgets from being presented as PIC signoff.
 
 Current clock results are recorded in
 [the architecture/signoff report](docs/architecture_signoff.md). The complete
-mapped research backend closes the mandatory 100 GHz contract with 0.285 ps
-data slack; its estimated model Fmax is 103.35 GHz. The current map uses only
+mapped research backend closes the mandatory 100 GHz contract with 0.125 ps
+data slack; its estimated model Fmax is 101.59 GHz. The current map uses only
 synchronous-reset state, so it has no separate reset-pin recovery path. The
 exploratory 120 GHz point fails. This is an architecture-model
 result, not tapeout signoff: `make timing-signoff` and `make release-check`
