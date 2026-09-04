@@ -34,6 +34,7 @@ int main(int argc, char **argv) {
     top.irq_s_timer = 0;
     top.irq_s_external = 0;
     top.nmi = 0;
+    top.mtime = 0;
     top.imem_req_ready = 1;
     top.imem_rsp_valid = 1;
     top.imem_rsp_rdata = 0x00000013;

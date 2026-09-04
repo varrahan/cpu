@@ -43,7 +43,7 @@ params:
   MSTATUS_FS_LEGAL_VALUES: [0, 1, 2, 3]
   MUTABLE_MISA_D: false
   MUTABLE_MISA_C: false
-  TIME_CSR_IMPLEMENTED: false
+  TIME_CSR_IMPLEMENTED: true
   MUTABLE_MISA_U: false
   U_MODE_ENDIANNESS: little
   UXLEN: [32]
@@ -67,7 +67,7 @@ params:
   REPORT_VA_IN_STVAL_ON_INSTRUCTION_PAGE_FAULT: true
   REPORT_ENCODING_IN_STVAL_ON_ILLEGAL_INSTRUCTION: true
   STVAL_WIDTH: 32
-  SCOUNTENABLE_EN: [true, false, true, false, false, false, false, false,
+  SCOUNTENABLE_EN: [true, true, true, false, false, false, false, false,
     false, false, false, false, false, false, false, false, false, false,
     false, false, false, false, false, false, false, false, false, false,
     false, false, false, false]
@@ -124,7 +124,7 @@ params:
     false, false, false, false, false, false, false, false, false, false,
     false, false, false, false, false, false, false, false, false, false,
     false, false, false, false]
-  MCOUNTENABLE_EN: [true, false, true, false, false, false, false, false,
+  MCOUNTENABLE_EN: [true, true, true, false, false, false, false, false,
     false, false, false, false, false, false, false, false, false, false,
     false, false, false, false, false, false, false, false, false, false,
     false, false, false, false]

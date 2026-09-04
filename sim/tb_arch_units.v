@@ -22,28 +22,38 @@ module tb_arch_units;
     decoder dec (.*);
 
     reg [11:0] read_addr, commit_addr;
-    reg read_write_intent, commit_valid, retire, trap_enter, csr_mret;
+    reg read_write_intent, commit_valid, retire, trap_enter, csr_mret, csr_sret;
+    reg irq_m_software, irq_m_timer, irq_m_external;
+    reg irq_s_software, irq_s_timer, irq_s_external;
     reg [31:0] commit_data, trap_pc, trap_cause, trap_tval;
     reg fp_flags_valid, fp_dirty;
     reg [4:0] fp_flags;
-    wire [31:0] read_data, trap_vector, return_pc;
+    wire [31:0] read_data, read_modify_data, trap_vector, return_pc;
+    wire [31:0] interrupt_cause;
     wire [2:0] frm_out;
-    wire read_illegal;
+    wire [1:0] privilege;
+    wire read_illegal, interrupt_pending, wfi_wake_pending;
+    wire mstatus_mprv_out;
 
     csr_file csr (
+        .mtime(64'b0),
         .clk(clk), .rst_n(rst_n), .read_addr(read_addr),
         .read_write_intent(read_write_intent), .read_data(read_data),
+        .read_modify_data(read_modify_data),
         .read_illegal(read_illegal), .commit_valid(commit_valid),
         .commit_addr(commit_addr), .commit_data(commit_data), .retire(retire),
         .fp_flags_valid(fp_flags_valid), .fp_flags(fp_flags),
         .fp_dirty(fp_dirty),
-        .irq_m_software(1'b0), .irq_m_timer(1'b0),
-        .irq_m_external(1'b0), .irq_s_software(1'b0),
-        .irq_s_timer(1'b0), .irq_s_external(1'b0), .nmi(1'b0),
+        .irq_m_software(irq_m_software), .irq_m_timer(irq_m_timer),
+        .irq_m_external(irq_m_external), .irq_s_software(irq_s_software),
+        .irq_s_timer(irq_s_timer), .irq_s_external(irq_s_external), .nmi(1'b0),
         .trap_enter(trap_enter), .trap_pc(trap_pc), .trap_cause(trap_cause),
-        .trap_tval(trap_tval), .mret(csr_mret), .sret(1'b0),
+        .trap_tval(trap_tval), .mret(csr_mret), .sret(csr_sret),
         .trap_vector(trap_vector),
-        .return_pc(return_pc), .frm_out(frm_out)
+        .return_pc(return_pc), .frm_out(frm_out),
+        .interrupt_pending(interrupt_pending), .interrupt_cause(interrupt_cause),
+        .wfi_wake_pending(wfi_wake_pending), .privilege(privilege),
+        .mstatus_mprv_out(mstatus_mprv_out)
     );
 
     task tick;
@@ -97,6 +107,13 @@ module tb_arch_units;
         trap_cause = 0;
         trap_tval = 0;
         csr_mret = 0;
+        csr_sret = 0;
+        irq_m_software = 0;
+        irq_m_timer = 0;
+        irq_m_external = 0;
+        irq_s_software = 0;
+        irq_s_timer = 0;
+        irq_s_external = 0;
         fp_flags_valid = 0;
         fp_flags = 0;
         fp_dirty = 0;
@@ -126,7 +143,8 @@ module tb_arch_units;
         if (read_illegal || read_data != 32'h4014_112d)
             $fatal(1, "MISA read mismatch");
         select_csr(12'h301, 1);
-        if (!read_illegal) $fatal(1, "MISA write was not rejected");
+        if (read_illegal || read_data != 32'h4014_112d)
+            $fatal(1, "MISA WARL write mismatch");
         select_csr(12'h123, 0);
         if (!read_illegal) $fatal(1, "unknown CSR was not rejected");
 
@@ -197,6 +215,81 @@ module tb_arch_units;
         retire = 0;
         select_csr(12'hb02, 0);
         if (read_data != count_before) $fatal(1, "minstret inhibit mismatch");
+
+        write_csr(12'h3a0, 32'h7f7f_7f7f);
+        select_csr(12'h3a0, 0);
+        if (read_data != 32'h1f1f_1f1f)
+            $fatal(1, "pmpcfg WARL mismatch: %h", read_data);
+        write_csr(12'h3b0, 32'hffff_ffff);
+        select_csr(12'h3b0, 0);
+        if (read_data != 32'h3fff_ffff)
+            $fatal(1, "pmpaddr WARL mismatch: %h", read_data);
+        select_csr(12'h3a1, 1);
+        if (read_illegal || read_data != 0)
+            $fatal(1, "read-only-zero pmpcfg1 mismatch");
+        select_csr(12'h3bf, 1);
+        if (read_illegal || read_data != 0)
+            $fatal(1, "read-only-zero pmpaddr15 mismatch");
+        commit_addr = 12'h3bf;
+        commit_data = 32'hffff_ffff;
+        commit_valid = 1;
+        #1;
+        if (read_data != 0)
+            $fatal(1, "pmpaddr15 write forwarding mismatch");
+        commit_valid = 0;
+
+        irq_s_external = 1;
+        select_csr(12'h344, 0);
+        if (!read_data[9] || read_modify_data[9])
+            $fatal(1, "mip external/software SEIP separation mismatch");
+        commit_addr = 12'h344;
+        commit_data = 0;
+        commit_valid = 1;
+        #1;
+        if (!read_data[9] || read_modify_data[9])
+            $fatal(1, "mip pending-state forwarding mismatch");
+        commit_valid = 0;
+        write_csr(12'h344, 32'h0000_022a);
+        irq_s_external = 0;
+        select_csr(12'h344, 0);
+        if ((read_data & 32'h0000_022a) != 32'h0000_0222)
+            $fatal(1, "mip writable-bit mismatch: %h", read_data);
+
+        write_csr(12'h303, 32'h0000_0800);
+        write_csr(12'h304, 32'h0000_0808);
+        write_csr(12'h300, 0);
+        csr_mret = 1;
+        tick();
+        csr_mret = 0;
+        irq_m_external = 1;
+        irq_m_software = 1;
+        #1;
+        if (!interrupt_pending || interrupt_cause != 32'h8000_000b)
+            $fatal(1, "machine-target interrupt priority mismatch: %h",
+                   interrupt_cause);
+
+        rst_n = 0;
+        tick();
+        rst_n = 1;
+        tick();
+        irq_m_external = 0;
+        irq_m_software = 0;
+        write_csr(12'h300, 32'h0002_0100);
+        csr_sret = 1;
+        tick();
+        csr_sret = 0;
+        if (privilege != 2'b01 || mstatus_mprv_out)
+            $fatal(1, "SRET privilege/MPRV transition mismatch");
+
+        rst_n = 0;
+        tick();
+        rst_n = 1;
+        tick();
+        write_csr(12'h304, 32'h0000_0080);
+        irq_m_timer = 1;
+        #1;
+        if (interrupt_pending || !wfi_wake_pending)
+            $fatal(1, "WFI wake ignored masked pending interrupt");
 
         $display("PASS: decoder and machine-CSR signoff regression complete");
         $finish;

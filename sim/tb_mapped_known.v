@@ -104,6 +104,7 @@ module tb_mapped_known;
         .irq_m_software(irq_m_software), .irq_m_timer(irq_m_timer),
         .irq_m_external(irq_m_external), .irq_s_software(irq_s_software),
         .irq_s_timer(irq_s_timer), .irq_s_external(irq_s_external), .nmi(nmi),
+        .mtime(64'b0),
         .debug_req(debug_req), .debug_resume(debug_resume),
         .debug_reg_valid(debug_reg_valid), .debug_reg_write(debug_reg_write),
         .debug_reg_addr(debug_reg_addr), .debug_reg_wdata(debug_reg_wdata),

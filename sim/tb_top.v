@@ -137,6 +137,7 @@ module tb_top;
         .irq_s_timer    (irq_s_timer),
         .irq_s_external (irq_s_external),
         .nmi            (nmi),
+        .mtime          (64'b0),
         .debug_req      (debug_req),
         .debug_resume   (debug_resume),
         .debug_reg_valid(debug_reg_valid),
@@ -601,7 +602,7 @@ module tb_top;
 
     task load_supervisor_user;
         begin
-            imem[0]  = enc_u(20'h40000, 1, 7'h37);
+            imem[0]  = enc_i(-1, 0, 3'b000, 1, 7'h13);
             imem[1]  = enc_i(12'h3b0, 1, 3'b001, 0, 7'h73);
             imem[2]  = enc_i(15, 0, 3'b000, 1, 7'h13);
             imem[3]  = enc_i(12'h3a0, 1, 3'b001, 0, 7'h73);
@@ -639,7 +640,7 @@ module tb_top;
             dmem[1026] = 32'h0000_1401; // root VPN1=2 -> table PPN 5
             dmem[2048] = 32'h0000_0c0b; // VA 0x00400000 -> PA 0x3000 RX
             dmem[5120] = 32'h0000_1007; // VA 0x00800000 -> PA 0x4000 RW
-            imem[0]  = enc_u(20'h40000, 1, 7'h37);
+            imem[0]  = enc_i(-1, 0, 3'b000, 1, 7'h13);
             imem[1]  = enc_i(12'h3b0, 1, 3'b001, 0, 7'h73);
             imem[2]  = enc_i(15, 0, 3'b000, 1, 7'h13);
             imem[3]  = enc_i(12'h3a0, 1, 3'b001, 0, 7'h73);
@@ -688,6 +689,17 @@ module tb_top;
             imem[32] = enc_i(12'h342, 0, 3'b010, 3, 7'h73);
             imem[33] = enc_s(4, 3, 0, 3'b010);
             imem[34] = 32'h3020_0073;
+        end
+    endtask
+
+    task load_wfi_masked_interrupt;
+        begin
+            imem[0] = enc_i(-2048, 0, 3'b000, 1, 7'h13);
+            imem[1] = enc_i(12'h304, 1, 3'b001, 0, 7'h73); // MEIE, MIE=0
+            imem[2] = 32'h1050_0073;
+            imem[3] = enc_i(67, 0, 3'b000, 2, 7'h13);
+            imem[4] = enc_s(0, 2, 0, 3'b010);
+            imem[5] = enc_j(0, 0);
         end
     endtask
 
@@ -975,6 +987,20 @@ module tb_top;
         if (dmem[0] != 66 || dmem[1] != 32'h8000_000b)
             $fatal(1, "WFI wake regression failure: %h %h",
                    dmem[0], dmem[1]);
+
+        rst_n = 0;
+        clear_memories();
+        load_wfi_masked_interrupt();
+        reset_cpu();
+        repeat (300) @(posedge clk);
+        if (dmem[0] != 0)
+            $fatal(1, "WFI did not sleep before masked interrupt");
+        irq_m_external = 1;
+        repeat (200) @(posedge clk);
+        irq_m_external = 0;
+        repeat (200) @(posedge clk);
+        if (dmem[0] != 67)
+            $fatal(1, "WFI ignored masked pending interrupt");
 
         rst_n = 0;
         clear_memories();
