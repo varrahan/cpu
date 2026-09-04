@@ -149,7 +149,8 @@ wave-pipeline boundaries while preserving architectural behavior.
 - [x] Logical photonic-cell mapping and mapped regression implemented.
 - [x] Loss-aware mandatory 100 GHz complete-netlist research timing closes.
 - [x] Physical manifest/preflight release gate implemented.
-- [x] Full ACT4 F/D conformance restored; all 281 supported tests pass.
+- [x] ACT4 conformance passes all 660 complete configured tests.
+- [x] Run the complete configured ACT4 set after removing the extension filter.
 - [ ] Vendor-PDK splitter/regenerator placement and GDS generation complete.
 - [ ] External ISA/OS/debug compliance and physical signoff complete.
 

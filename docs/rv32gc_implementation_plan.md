@@ -57,8 +57,8 @@ RVA23 and RVB23 application profiles are RV64-only.
   optical loss/timing, clock power, PVT, DRC, and connectivity are signed off.
 
 Current status: `make check` passes and the complete mapped research model
-closes at 100 GHz. `make architecture-cert` passes, including all 281 supported
-ACT4 tests, Sail/RVFI, SoftFloat, and boot. See the
+closes at 100 GHz. Sail/RVFI, SoftFloat, and boot pass; ACT4 passes all 660
+tests selected by the complete unfiltered configuration. See the
 [architecture/signoff report](architecture_signoff.md).
 
 ## Non-RTL release inputs

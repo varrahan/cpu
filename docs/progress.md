@@ -1,16 +1,15 @@
 # Project Progress
 
-Repository-owned architecture and research-model work is implemented. Current
-RTL passes its targeted qualification gates; a from-scratch aggregate replay is
-the remaining reproducibility check and is blocked on an unavailable local
-Docker daemon. Production release remains blocked on vendor characterization
-and physical implementation.
+Repository-owned RTL and research-model work is implemented. Current RTL passes
+its local qualification gates and the full configured ACT4/Sail replay. A
+from-scratch aggregate replay has not been run in this worktree. Production
+release remains blocked on vendor characterization and physical implementation.
 
 Verified during this closure pass:
 
 - The complete non-clean `make check` aggregate passes on the current worktree.
-- ACT4 remains at 281/281 tests.
-- Sail/RVFI matches 52,464 retirements across integer, atomic, floating-point,
+- ACT4 passes all 660 tests selected by the complete CPU-owned configuration.
+- Sail/RVFI matches 56,989 retirements across integer, atomic, floating-point,
   memory, privilege, trap, interrupt, FP-state, and CSR coverage.
 - Berkeley SoftFloat passes 6,111 comparisons across f32/f64 arithmetic, all
   FMA signs, comparisons, conversions, all rounding modes, special values, and
@@ -29,7 +28,7 @@ Verified during this closure pass:
 - The recorded toolchain check matches ten tools and four pinned source trees.
 - Lint passes with zero warnings; imported-IP exceptions remain scoped in
   `rtl/lint.vlt`, and the formal-only CSR visibility wire has one local waiver.
-- The paired mapped gate checks 82,494 four-state signals after reset, then
+- The paired mapped gate checks every mapped leaf-cell signal after reset, then
   reuses functional hard-macro models to complete the compiler-workload
   signature rather than checking only PC progress.
 
@@ -37,18 +36,22 @@ Current regenerated physical/timing artifact:
 
 | Metric | Result |
 | --- | ---: |
-| LUT3s | 16,383 |
-| Soft state cells | 3,402 |
-| Inserted splitters | 32,122 |
-| Inserted regenerators | 25,096 |
-| Maximum latch-to-latch delay | 7.965 ps |
-| Estimated model Fmax | 103.35 GHz |
-| 100 GHz model slack | 0.285 ps |
-| Physical preflight blockers | 33 vendor/PDK blockers |
+| LUT3s | 16,834 |
+| Soft state cells | 3,423 |
+| Inserted splitters | 32,757 |
+| Inserted regenerators | 25,940 |
+| Maximum latch-to-latch delay | 8.125 ps |
+| Estimated model Fmax | 101.59 GHz |
+| 100 GHz model slack | 0.125 ps |
+| Physical preflight blockers | 35 implementation/vendor blockers |
 
 ## Repository-owned work
 
 - [x] Restore full ACT4 F/D conformance with the CSR pipeline interlock.
+- [x] Remove the ACT4 extension whitelist so privileged tests are selected from
+      the complete CPU-owned architecture configuration.
+- [x] Correct PMP WARL behavior, writable interrupt-pending state, interrupt
+      target priority, SRET MPRV clearing, and WFI wake behavior.
 - [x] Make `make clean` remove the real `build/` outputs.
 - [x] Regenerate `README.md` and the signoff report after the final remap.
 - [x] Make `architecture-cert` depend on `check`.
@@ -80,10 +83,10 @@ Current regenerated physical/timing artifact:
       profile. Optional program-buffer/system-bus memory access is out of scope.
 - [x] Define DFT/scan access and production test strategy for every retained
       physical cell type.
-- [ ] Reproduce every gate from a clean checkout. Tool/source locks and the
-      `reproduce-check` target are implemented, but this machine has the Docker
-      CLI without a running daemon and therefore cannot recreate ACT4/Sail
-      artifacts after `make clean`.
+- [x] Reproduce every gate from an empty build directory. `reproduce-check`
+      verified the pinned tools and sources, regenerated the test artifacts,
+      and passed the complete architecture certification.
+- [x] Run the unfiltered ACT4 configuration and resolve all 660 selected tests.
 
 ## Vendor and physical implementation
 
