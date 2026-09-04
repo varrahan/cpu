@@ -80,12 +80,15 @@ def main():
             reasons.append(f"vendor GDS cell does not exist: {metadata['gds_cell']}")
 
     inserted_splitters = inserted_regenerators = 0
+    dual_rail_expanded = wdm_routed = False
     physical_path = Path(args.physical_netlist)
     if not physical_path.exists():
         reasons.append(f"missing inserted physical netlist: {args.physical_netlist}")
     else:
         physical = load(physical_path)
         support = physical.get("physical_support", {})
+        dual_rail_expanded = support.get("dual_rail_expanded") is True
+        wdm_routed = support.get("wdm_routed") is True
         physical_counts, _, physical_fanout, _ = analyze_netlist(physical)
         digest = hashlib.sha256(logical_path.read_bytes()).hexdigest()
         if support.get("logical_netlist_sha256") != digest:
@@ -103,6 +106,10 @@ def main():
         if support.get("inserted_splitters") != inserted_splitters or \
                 support.get("inserted_regenerators") != inserted_regenerators:
             reasons.append("physical support manifest does not match its netlist")
+        if not dual_rail_expanded:
+            reasons.append("dual-rail physical expansion is not implemented")
+        if not wdm_routed:
+            reasons.append("WDM routing is not implemented")
         maximum_loss = (support.get("clock_tree") or {}).get(
             "maximum_segment_loss_db", 0
         )
@@ -179,7 +186,9 @@ def main():
         "minimum_clock_frequency_ghz": minimum_clock_ghz,
         "logical_cell_counts": dict(sorted(counts.items())),
         "logical_signal_bits": signal_bits,
-        "dual_rail_waveguides_before_wdm": signal_bits * 2,
+        "required_dual_rail_waveguides_before_wdm": signal_bits * 2,
+        "dual_rail_expanded": dual_rail_expanded,
+        "wdm_routed": wdm_routed,
         "maximum_logical_fanout": max_fanout,
         "required_binary_splitters": splitters,
         "inserted_splitters": inserted_splitters,

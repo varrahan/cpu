@@ -182,6 +182,8 @@ def main():
         "logical_netlist_sha256": hashlib.sha256(netlist_path.read_bytes()).hexdigest(),
         "inserted_splitters": totals["splitters"],
         "inserted_regenerators": totals["regenerators"],
+        "dual_rail_expanded": False,
+        "wdm_routed": False,
         "clock_tree": clock,
     }
     output = Path(args.output)
