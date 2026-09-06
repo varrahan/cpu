@@ -9,7 +9,6 @@ from pathlib import Path
 
 
 FORBIDDEN = ("photodetector", "adc", "dac", "electrical_modulator", "electrical_gate")
-STATE_CELL = "P_TBIN_DFF"
 REQUIRED_SIGNOFF = (
     "clock_frequency_ghz",
     "worst_case_path_ps",
@@ -17,7 +16,17 @@ REQUIRED_SIGNOFF = (
     "connectivity_errors",
     "minimum_receiver_margin_db",
     "inserted_regenerators",
+    "vendor_characterization_id",
+    "clock_tree_pass",
+    "pulse_integrity_pass",
+    "pvt_pass",
+    "thermal_pass",
+    "crosstalk_pass",
+    "coupling_tolerance_pass",
+    "monte_carlo_pass",
 )
+
+REQUIRED_PASS_FIELDS = REQUIRED_SIGNOFF[-7:]
 
 
 def load(path):
@@ -127,6 +136,9 @@ def main():
     if cell_db.get("status") != "vendor-characterized":
         reasons.append("cell library is not vendor-characterized")
     minimum_clock_ghz = 1000 / cell_db["target_cycle_ps"]
+    minimum_cell_rate_ghz = cell_db.get(
+        "minimum_characterized_rate_ghz", minimum_clock_ghz
+    )
     for name in required_physical:
         metadata = cell_db["cells"][name]
         for field, label in (
@@ -137,9 +149,10 @@ def main():
                 continue
             maximum_rate = metadata[field]
             if not isinstance(maximum_rate, (int, float)) or \
-                    maximum_rate < minimum_clock_ghz:
+                    maximum_rate < minimum_cell_rate_ghz:
                 reasons.append(
-                    f"{name} {label} rate is below {minimum_clock_ghz:g} GHz"
+                    f"{name} {label} rate is below "
+                    f"{minimum_cell_rate_ghz:g} GHz"
                 )
     if assembly.get("status") != "release":
         reasons.append("assembly floorplan is still preliminary")
@@ -157,6 +170,9 @@ def main():
         for field in REQUIRED_SIGNOFF:
             if signoff.get(field) is None:
                 reasons.append(f"missing signoff field: {field}")
+        for field in REQUIRED_PASS_FIELDS:
+            if signoff.get(field) is not None and signoff.get(field) is not True:
+                reasons.append(f"signoff did not pass: {field}")
         timing = signoff.get("worst_case_path_ps")
         if isinstance(timing, (int, float)) and timing > cell_db["target_cycle_ps"]:
             reasons.append(
@@ -184,6 +200,7 @@ def main():
         "release_ready": not reasons,
         "target_cycle_ps": cell_db["target_cycle_ps"],
         "minimum_clock_frequency_ghz": minimum_clock_ghz,
+        "minimum_characterized_cell_rate_ghz": minimum_cell_rate_ghz,
         "logical_cell_counts": dict(sorted(counts.items())),
         "logical_signal_bits": signal_bits,
         "required_dual_rail_waveguides_before_wdm": signal_bits * 2,

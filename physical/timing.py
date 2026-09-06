@@ -410,13 +410,16 @@ def main():
     parser.add_argument("--constraints", default="constraints/photonic.sdc")
     parser.add_argument("--output", default="build/physical/timing.json")
     parser.add_argument("--frequencies-ghz", nargs="+", type=float)
-    parser.add_argument("--minimum-frequency-ghz", type=float, default=100)
+    parser.add_argument("--minimum-frequency-ghz", type=float)
     parser.add_argument("--uncertainty-fraction", type=float)
     parser.add_argument("--skew-fraction", type=float, default=0.05)
     parser.add_argument("--require-model-pass", action="store_true")
     parser.add_argument("--require-pass", action="store_true")
     args = parser.parse_args()
     constraints = load_sdc(args.constraints)
+    cell_db = load(args.cells)
+    if args.minimum_frequency_ghz is None:
+        args.minimum_frequency_ghz = 1000 / cell_db["target_cycle_ps"]
     if args.frequencies_ghz is None:
         args.frequencies_ghz = [1000 / constraints["period_ps"]]
     if any(frequency <= 0 for frequency in args.frequencies_ghz):
@@ -435,7 +438,8 @@ def main():
         parser.error("combined uncertainty and skew must be below one period")
 
     self_test()
-    cell_db = load(args.cells)
+    if not math.isclose(constraints["period_ps"], cell_db["target_cycle_ps"]):
+        raise ValueError("SDC period and cell-library target cycle disagree")
     logical = load(args.netlist)
     physical = load(args.physical_netlist) if args.physical_netlist else logical
     logical_module = logical["modules"]["top"]
@@ -499,6 +503,10 @@ def main():
     targets = []
     for frequency in args.frequencies_ghz:
         period = 1000 / frequency
+        required_cell_rate = max(
+            frequency,
+            cell_db.get("minimum_characterized_rate_ghz", frequency),
+        )
         uncertainty = constraints["uncertainty_ps"] if \
             args.uncertainty_fraction is None else \
             period * args.uncertainty_fraction
@@ -536,21 +544,24 @@ def main():
             "clock_tree_meets_target_rate": all(
                 isinstance(cell_db["cells"][name].get("maximum_clock_rate_ghz"),
                            (int, float)) and
-                cell_db["cells"][name]["maximum_clock_rate_ghz"] >= frequency
+                cell_db["cells"][name]["maximum_clock_rate_ghz"] >=
+                    required_cell_rate
                 for name in CLOCK_CELLS
             ),
             "combinational_cells_meet_target_rate": all(
                 isinstance(cell_db["cells"][name].get("maximum_symbol_rate_ghz"),
                            (int, float)) and
-                cell_db["cells"][name]["maximum_symbol_rate_ghz"] >= frequency
+                cell_db["cells"][name]["maximum_symbol_rate_ghz"] >=
+                    required_cell_rate
                 for name in combinational_types
             ),
             "macros_meet_target_rate": all(
-                macro["maximum_clock_rate_ghz"] >= frequency and
+                macro["maximum_clock_rate_ghz"] >= required_cell_rate and
                 macro["interface_setup_ps"] + macro["clock_to_output_ps"] <=
                     period
                 for macro in macros.values()
             ),
+            "minimum_characterized_cell_rate_ghz": required_cell_rate,
             "pulse_width_ps": pulse_width,
             "pulse_fits_period": pulse_width <= period,
         })
