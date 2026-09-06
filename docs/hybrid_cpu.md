@@ -34,8 +34,8 @@ launch only at the head. Translation must prove a speculative load cacheable
 before it accesses data; MMIO waits at the head. Loads cannot pass an unfinished
 store or atomic.
 
-Electronic register and cache storage uses `rtl/memory/async_memory.v`; integer
-and FP execution use `muldiv_unit` and `fpu_wrapper`.
+Electronic register and cache storage uses `rtl/memory/async_memory.sv`; integer
+and FP execution use `muldiv_unit` and `fpu_unit`.
 
 The shared 256-byte data cache has two physical tag read ports and four 32-bit
 data read ports, supporting two simultaneous 64-bit read hits. Its write port,

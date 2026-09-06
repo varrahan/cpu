@@ -14,15 +14,15 @@ STRESS_HEX = $(PROGRAM_DIR)/rv32gc_stress.hex
 	stress-image toolchain-check reproduce-check
 
 HYBRID_SRC = rtl/top/hybrid_pkg.sv \
-	rtl/photonic/wdm_fabric.sv rtl/decode/hybrid_decode.sv \
+	rtl/photonic/wdm_fabric.sv \
 	rtl/memory/hybrid_icache.sv rtl/memory/hybrid_memory.sv \
 	rtl/top/hybrid_top.sv
-HYBRID_RTL = rtl/memory/async_memory.v rtl/fetch/rvc_decompressor.v \
-	rtl/decode/decoder.v rtl/decode/csr_file.v \
-	rtl/execute/alu.v rtl/execute/muldiv_unit.v rtl/execute/fpu_wrapper.sv \
-	rtl/memory/memory_stage.v rtl/memory/pmp_checker.v rtl/memory/sv32_mmu.v \
-	rtl/memory/memory_arbiter4.v rtl/memory/dcache.v \
-	rtl/debug/debug_control.v rtl/debug/riscv_debug_transport.sv
+HYBRID_RTL = rtl/memory/async_memory.sv rtl/fetch/rvc_decompressor.sv \
+	rtl/decode/decoder.sv rtl/decode/csr_file.sv \
+	rtl/execute/alu.sv rtl/execute/muldiv_unit.sv rtl/execute/fpu_unit.sv \
+	rtl/memory/memory_stage.sv rtl/memory/pmp_checker.sv rtl/memory/sv32_mmu.sv \
+	rtl/memory/memory_arbiter4.sv rtl/memory/dcache.sv \
+	rtl/debug/debug_control.sv rtl/debug/riscv_debug_transport.sv
 RTL_SRC = $(HYBRID_SRC) $(HYBRID_RTL)
 CORE ?= hybrid
 ifneq ($(CORE),hybrid)
@@ -114,7 +114,7 @@ hybrid-formal: $(SV2V)
 	$(HYBRID_YOSYS) -ql build/hybrid/fabric-formal.log -p 'read_verilog -sv -formal build/hybrid/fabric-formal.v; prep -top hybrid_fabric_formal -flatten; memory_map; opt_clean; sat -seq 24 -set-init-zero -set-at 1 rst_n 0 -prove-asserts -verify'
 	$(HYBRID_YOSYS) -ql build/hybrid/allocator-formal.log -p 'read_verilog -sv -formal build/hybrid/fabric-formal.v; prep -top hybrid_allocator_formal -flatten; opt; sat -prove-asserts -verify'
 
-TB_SRC = sim/tb_top.v
+TB_SRC = sim/tb_top.sv
 
 COMMON_CELLS_SRC = third_party/common_cells/src/cf_math_pkg.sv \
 	third_party/common_cells/src/lzc.sv \
@@ -142,39 +142,39 @@ VERILATOR_FLAGS = --binary --timing $(HYBRID_TRACE_FLAGS) \
 architecture-units:
 	mkdir -p $(ARCH_DIR)
 	iverilog -g2012 -s tb_arch_units -o $(ARCH_DIR)/units.vvp \
-		rtl/decode/decoder.v rtl/decode/csr_file.v sim/tb_arch_units.v
+		rtl/top/hybrid_pkg.sv rtl/decode/decoder.sv rtl/decode/csr_file.sv sim/tb_arch_units.sv
 	vvp $(ARCH_DIR)/units.vvp
 
 extended-units:
 	mkdir -p $(ARCH_DIR)
 	iverilog -g2012 -s tb_extended_units -o $(ARCH_DIR)/extended.vvp \
-		rtl/fetch/rvc_decompressor.v rtl/execute/muldiv_unit.v \
-		sim/tb_extended_units.v
+		rtl/fetch/rvc_decompressor.sv rtl/execute/muldiv_unit.sv \
+		sim/tb_extended_units.sv
 	vvp $(ARCH_DIR)/extended.vvp
 
 fpu-check:
 	mkdir -p build/verilator/fpu
 	verilator $(VERILATOR_FLAGS) --top-module tb_fpu \
 		-Mdir build/verilator/fpu $(COMMON_CELLS_SRC) $(FPNEW_SRC) \
-		rtl/execute/fpu_wrapper.sv sim/tb_fpu.sv
+		rtl/execute/fpu_unit.sv sim/tb_fpu.sv
 	build/verilator/fpu/Vtb_fpu
 
 pmp-check:
 	mkdir -p $(ARCH_DIR)
 	iverilog -g2012 -s tb_pmp -o $(ARCH_DIR)/pmp.vvp \
-		rtl/memory/pmp_checker.v sim/tb_pmp.v
+		rtl/memory/pmp_checker.sv sim/tb_pmp.sv
 	vvp $(ARCH_DIR)/pmp.vvp
 
 sv32-check:
 	mkdir -p $(ARCH_DIR)
 	iverilog -g2012 -s tb_sv32 -o $(ARCH_DIR)/sv32.vvp \
-		rtl/memory/sv32_mmu.v sim/tb_sv32.v
+		rtl/memory/sv32_mmu.sv sim/tb_sv32.sv
 	vvp $(ARCH_DIR)/sv32.vvp
 
 debug-check:
 	mkdir -p $(ARCH_DIR)
 	iverilog -g2012 -s tb_debug -o $(ARCH_DIR)/debug.vvp \
-		rtl/debug/debug_control.v sim/tb_debug.v
+		rtl/debug/debug_control.sv sim/tb_debug.sv
 	vvp $(ARCH_DIR)/debug.vvp
 
 all: run
@@ -194,7 +194,7 @@ formal: hybrid-formal
 memory-check:
 	mkdir -p $(ARCH_DIR)
 	iverilog -g2012 -s tb_async_memory -o $(ARCH_DIR)/memory.vvp \
-		rtl/memory/async_memory.v sim/tb_async_memory.v
+		rtl/memory/async_memory.sv sim/tb_async_memory.sv
 	vvp $(ARCH_DIR)/memory.vvp
 
 toolchain-check: act4-source softfloat-source praxis-source openocd-source
@@ -388,7 +388,7 @@ softfloat-check: $(SOFTFLOAT_RISCV)
 	mkdir -p build/verilator/softfloat
 	verilator $(VERILATOR_FLAGS) --top-module tb_fpu_random \
 		-Mdir build/verilator/softfloat $(COMMON_CELLS_SRC) $(FPNEW_SRC) \
-		rtl/execute/fpu_wrapper.sv sim/tb_fpu_random.sv \
+		rtl/execute/fpu_unit.sv sim/tb_fpu_random.sv \
 		$(abspath sim/softfloat_dpi.c) \
 		-CFLAGS "-I$(abspath $(SOFTFLOAT_SRC)/source/include)" \
 		-LDFLAGS "$(abspath $(SOFTFLOAT_BUILD)/softfloat.a)"
