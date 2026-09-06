@@ -35,7 +35,7 @@ module tb_fpu_random;
     integer tests = 0;
 
     always #5 clk = ~clk;
-    fpu_wrapper dut (.*);
+    fpu_unit dut (.*);
 
     function automatic [31:0] op_fp(
         input [6:0] funct7, input [4:0] rs2, input [2:0] rm);

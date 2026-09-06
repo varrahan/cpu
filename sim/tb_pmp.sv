@@ -1,9 +1,9 @@
 `timescale 1ns/1ps
 module tb_pmp;
-    reg [31:0] addr, cfg, a0, a1, a2, a3;
-    reg [3:0] size;
-    reg [1:0] privilege;
-    reg access_read, access_write, access_execute;
+    logic [31:0] addr, cfg, a0, a1, a2, a3;
+    logic [3:0] size;
+    logic [1:0] privilege;
+    logic access_read, access_write, access_execute;
     wire allow;
     pmp_checker dut (.*,
         .pmpcfg0(cfg), .pmpaddr0(a0), .pmpaddr1(a1),

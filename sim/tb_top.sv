@@ -2,16 +2,16 @@
 
 module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
     localparam TEST_SCALE=8*((307+FABRIC_BITS_PER_CYCLE-1)/FABRIC_BITS_PER_CYCLE);
-    reg clk;
-    reg rst_n;
+    logic clk;
+    logic rst_n;
 
     wire        imem_req_valid;
     wire        imem_req_ready;
     wire [31:0] imem_req_addr;
-    reg         imem_rsp_valid;
+    logic         imem_rsp_valid;
     wire        imem_rsp_ready;
-    reg  [31:0] imem_rsp_rdata;
-    reg         imem_rsp_error;
+    logic  [31:0] imem_rsp_rdata;
+    logic         imem_rsp_error;
 
     wire        dmem_req_valid;
     wire        dmem_req_ready;
@@ -21,23 +21,23 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
     wire [3:0]  dmem_req_be;
     wire        dmem_req_amo;
     wire [4:0]  dmem_req_amo_op;
-    reg         dmem_rsp_valid;
+    logic         dmem_rsp_valid;
     wire        dmem_rsp_ready;
-    reg  [31:0] dmem_rsp_rdata;
-    reg         dmem_rsp_error;
+    logic  [31:0] dmem_rsp_rdata;
+    logic         dmem_rsp_error;
 
-    reg [31:0] imem [0:8191];
-    reg [31:0] dmem [0:8191];
-    reg [2:0] bus_phase;
-    reg inject_imem_error;
-    reg inject_dmem_error;
-    reg hold_dmem=0;
-    reg irq_m_software, irq_m_timer, irq_m_external;
-    reg irq_s_software, irq_s_timer, irq_s_external, nmi;
-    reg debug_req, debug_resume, debug_reg_valid, debug_reg_write;
-    reg debug_step=0;
-    reg [5:0] debug_reg_addr;
-    reg [63:0] debug_reg_wdata;
+    logic [31:0] imem [0:8191];
+    logic [31:0] dmem [0:8191];
+    logic [2:0] bus_phase;
+    logic inject_imem_error;
+    logic inject_dmem_error;
+    logic hold_dmem=0;
+    logic irq_m_software, irq_m_timer, irq_m_external;
+    logic irq_s_software, irq_s_timer, irq_s_external, nmi;
+    logic debug_req, debug_resume, debug_reg_valid, debug_reg_write;
+    logic debug_step=0;
+    logic [5:0] debug_reg_addr;
+    logic [63:0] debug_reg_wdata;
     wire debug_reg_ready, debug_halted;
     wire [63:0] debug_reg_rdata;
     wire [31:0] debug_dpc;
@@ -115,7 +115,7 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
     end
 
     integer lane;
-    reg cache_trace=0;
+    logic cache_trace=0;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             dmem_rsp_valid <= 0;

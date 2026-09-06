@@ -1,20 +1,20 @@
 `timescale 1ns/1ps
 module tb_sv32;
-    reg clk = 0, rst_n = 0, flush = 0, req_valid = 0;
+    logic clk = 0, rst_n = 0, flush = 0, req_valid = 0;
     always #5 clk = ~clk;
-    reg [31:0] vaddr, satp;
-    reg [1:0] privilege;
-    reg access_read, access_write, access_execute;
-    reg mstatus_sum, mstatus_mxr;
+    logic [31:0] vaddr, satp;
+    logic [1:0] privilege;
+    logic access_read, access_write, access_execute;
+    logic mstatus_sum, mstatus_mxr;
     wire resp_ready, page_fault, access_fault;
     wire [31:0] paddr;
     wire mem_req_valid, mem_req_write, mem_req_amo, mem_rsp_ready;
     wire [31:0] mem_req_addr, mem_req_wdata;
     wire [3:0] mem_req_be;
     wire [4:0] mem_req_amo_op;
-    reg mem_rsp_valid = 0, mem_rsp_error = 0;
-    reg [31:0] mem_rsp_rdata = 0;
-    reg [31:0] mem [0:4095];
+    logic mem_rsp_valid = 0, mem_rsp_error = 0;
+    logic [31:0] mem_rsp_rdata = 0;
+    logic [31:0] mem [0:4095];
     integer i, timeout;
 
     sv32_mmu dut (.*,

@@ -15,7 +15,7 @@ module tb_fpu;
 
     always #5 clk = ~clk;
 
-    fpu_wrapper dut (.*);
+    fpu_unit dut (.*);
 
     function automatic [31:0] op_fp;
         input [6:0] funct7;
