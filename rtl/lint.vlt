@@ -7,16 +7,16 @@ lint_off -file "third_party/cvfpu/vendor/opene906/E906_RTL_FACTORY/gen_rtl/clk/r
 lint_off -file "third_party/cvfpu/vendor/openc910/C910_RTL_FACTORY/gen_rtl/vfdsu/rtl/*"
 
 // Architectural alignment/reserved bits and deliberately unused IP ports.
-lint_off -rule PINCONNECTEMPTY -file "rtl/execute/fpu_wrapper.sv" -match "*early_valid_o*"
-lint_off -rule UNUSEDSIGNAL -file "rtl/decode/csr_file.v" -match "*'trap_pc'[0]*"
-lint_off -rule UNUSEDSIGNAL -file "rtl/execute/muldiv_unit.v" -match "*'signed_product'[31:0]*"
-lint_off -rule UNUSEDSIGNAL -file "rtl/execute/muldiv_unit.v" -match "*'signed_unsigned_product'[64,31:0]*"
-lint_off -rule UNUSEDSIGNAL -file "rtl/execute/fpu_wrapper.sv" -match "*'instr'[19:15,11:7]*"
-lint_off -rule UNUSEDSIGNAL -file "rtl/memory/pmp_checker.v" -match "*'cfg'[6:5]*"
-lint_off -rule UNUSEDSIGNAL -file "rtl/memory/sv32_mmu.v" -match "*'pte'[9:8]*"
-lint_off -rule UNUSEDSIGNAL -file "rtl/memory/sv32_mmu.v" -match "*'flags'[5]*"
-lint_off -rule UNUSEDSIGNAL -file "rtl/debug/debug_control.v" -match "*'dpc_wdata'[0]*"
-lint_off -rule UNUSEDSIGNAL -file "rtl/debug/debug_control.v" -match "*'next_pc'[0]*"
+lint_off -rule PINCONNECTEMPTY -file "rtl/execute/fpu_unit.sv" -match "*early_valid_o*"
+lint_off -rule UNUSEDSIGNAL -file "rtl/decode/csr_file.sv" -match "*'trap_pc'[0]*"
+lint_off -rule UNUSEDSIGNAL -file "rtl/execute/muldiv_unit.sv" -match "*'signed_product'[31:0]*"
+lint_off -rule UNUSEDSIGNAL -file "rtl/execute/muldiv_unit.sv" -match "*'signed_unsigned_product'[64,31:0]*"
+lint_off -rule UNUSEDSIGNAL -file "rtl/execute/fpu_unit.sv" -match "*'instr'[19:15,11:7]*"
+lint_off -rule UNUSEDSIGNAL -file "rtl/memory/pmp_checker.sv" -match "*'cfg'[6:5]*"
+lint_off -rule UNUSEDSIGNAL -file "rtl/memory/sv32_mmu.sv" -match "*'pte'[9:8]*"
+lint_off -rule UNUSEDSIGNAL -file "rtl/memory/sv32_mmu.sv" -match "*'flags'[5]*"
+lint_off -rule UNUSEDSIGNAL -file "rtl/debug/debug_control.sv" -match "*'dpc_wdata'[0]*"
+lint_off -rule UNUSEDSIGNAL -file "rtl/debug/debug_control.sv" -match "*'next_pc'[0]*"
 
 // The local core reset is synchronous; imported FP arbiters assert it async.
 lint_off -rule SYNCASYNCNET -file "rtl/top/top_jtag.sv" -match "*Signal flopped as both synchronous and async: 'rst_n'*"

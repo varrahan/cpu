@@ -35,7 +35,7 @@ module top_jtag (
         .debug_dpc_write(debug_dpc_write), .debug_dpc_wdata(debug_dpc_wdata),
         .debug_step(debug_step)
     );
-    top u_core (
+    hybrid_top u_core (
         .clk(clk), .rst_n(rst_n), .irq_m_software(irq_m_software),
         .irq_m_timer(irq_m_timer), .irq_m_external(irq_m_external),
         .irq_s_software(irq_s_software), .irq_s_timer(irq_s_timer),
