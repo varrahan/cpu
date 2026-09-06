@@ -4,7 +4,7 @@ $schema: config_schema.json#
 kind: architecture configuration
 type: fully configured
 name: photonic-rv32gc
-description: Photonic RV32GC core architecture contract
+description: Hybrid RV32GC core architecture contract
 implemented_extensions:
   - { name: I, version: "= 2.1" }
   - { name: M, version: "= 2.0" }
