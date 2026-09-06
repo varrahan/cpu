@@ -1,5 +1,8 @@
 # Four-wide hybrid RV32GC CPU
 
+See the [implemented system diagram](cpu/README.md) and
+[hardware diagnostic and area estimate](cpu/hardware-diagnostic.md).
+
 `rtl/top/hybrid_top.sv` preserves the RV32GC/ILP32D architectural interface:
 32 integer and 32 FP architectural registers, M/S/U privilege, PMP, Sv32,
 interrupts, debug, and the existing one-outstanding instruction/data ports.

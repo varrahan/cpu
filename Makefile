@@ -13,7 +13,7 @@ STRESS_HEX = $(PROGRAM_DIR)/rv32gc_stress.hex
 	memory-check formal formal-compile lint-check jtag-cdc-check jtag-debug-check \
 	stress-image toolchain-check reproduce-check
 
-HYBRID_SRC = rtl/top/hybrid_pkg.sv \
+HYBRID_SRC = rtl/top/hybrid_pkg.sv rtl/top/hybrid_rob.sv rtl/top/hybrid_scheduler.sv \
 	rtl/photonic/wdm_fabric.sv \
 	rtl/memory/hybrid_icache.sv rtl/memory/hybrid_memory.sv \
 	rtl/top/hybrid_top.sv
@@ -33,8 +33,9 @@ CORE_DEFINES = -DRISCV_FORMAL
 HYBRID_BUILD_DIR ?= build/verilator/hybrid
 HYBRID_TRACE_FLAGS = $(if $(filter 1,$(TRACE)),--trace)
 SV2V ?= build/tools/sv2v
+export GHCRTS ?= -N2 -M2G
 HYBRID_SYNTH_MEMORY_MB ?= 10240
-HYBRID_YOSYS = prlimit --as=$$(( $(HYBRID_SYNTH_MEMORY_MB) * 1024 * 1024 )) --core=0 -- yosys
+HYBRID_YOSYS = python3 synth/limited_yosys.py --memory-mb $(HYBRID_SYNTH_MEMORY_MB)
 
 .PHONY: hybrid-compile hybrid-run hybrid-lint
 .PHONY: hybrid-fabric-check hybrid-budget
@@ -49,7 +50,21 @@ hybrid-fabric-check:
 hybrid-budget:
 	python3 physical/hybrid_budget.py --output build/hybrid/bandwidth.json
 
-.PHONY: hybrid-verilog hybrid-synth
+.PHONY: hybrid-control-check
+hybrid-control-check: $(SV2V)
+	python3 sim/check_yosys_limit.py
+	mkdir -p build/verilator/control
+	verilator --binary --timing --assert -j 2 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		--top-module tb_control -Mdir build/verilator/control \
+		rtl/top/hybrid_pkg.sv rtl/top/hybrid_rob.sv rtl/top/hybrid_scheduler.sv sim/tb_control.sv
+	prlimit --core=0 -- build/verilator/control/Vtb_control
+	mkdir -p build/hybrid
+	$(SV2V) -I. -EAlways -DSYNTHESIS rtl/top/hybrid_pkg.sv rtl/top/hybrid_rob.sv rtl/top/hybrid_scheduler.sv --top=hybrid_rob --top=hybrid_scheduler > build/hybrid/control-synthesis.v
+	$(HYBRID_YOSYS) -ql build/hybrid/control-synthesis.log -p 'read_verilog -sv build/hybrid/control-synthesis.v; hierarchy -check; proc; opt -full -keepdc; check -assert; select -assert-none t:*latch*'
+	GHCRTS='-N2 -M2G' $(SV2V) -EAlways -EAssert rtl/top/hybrid_pkg.sv formal/selector.sv --top=selector_formal > build/hybrid/selector-formal.v
+	$(HYBRID_YOSYS) -ql build/hybrid/selector-formal.log -p 'read_verilog -sv -formal build/hybrid/selector-formal.v; prep -top selector_formal -flatten; opt; sat -prove-asserts -verify -timeout 60'
+
+.PHONY: hybrid-verilog hybrid-synth hybrid-rob-area
 $(SV2V): synth/hybrid.py tools.lock.json
 	python3 synth/hybrid.py --sv2v $@ --install-only
 
@@ -71,12 +86,16 @@ hybrid-synth: hybrid-verilog
 		$(HYBRID_YOSYS) -ql build/hybrid/lower-synthesis.log -p 'read_rtlil build/hybrid/mux.il; opt_expr -keepdc; proc_dlatch; proc_dff; proc_memwr; proc_clean; opt_expr -keepdc; opt_clean; write_rtlil build/hybrid/core.tmp.il' && \
 		mv build/hybrid/core.tmp.il build/hybrid/core.il; \
 	fi
-	@if [ ! -f build/hybrid/optimized.il ] || [ build/hybrid/core.il -nt build/hybrid/optimized.il ]; then \
-		$(HYBRID_YOSYS) -ql build/hybrid/opt-synthesis.log -p 'read_rtlil build/hybrid/core.il; opt_clean -purge; opt -fast -noff -purge -keepdc; write_rtlil build/hybrid/optimized.tmp.il' && \
+	@if [ ! -f build/hybrid/optimized.il ] || [ build/hybrid/core.il -nt build/hybrid/optimized.il ] || [ synth/hybrid_opt.ys -nt build/hybrid/optimized.il ]; then \
+		$(HYBRID_YOSYS) -ql build/hybrid/opt-synthesis.log -s synth/hybrid_opt.ys && \
 		mv build/hybrid/optimized.tmp.il build/hybrid/optimized.il; \
 	fi
-	$(HYBRID_YOSYS) -qL build/hybrid/synthesis.log -p 'read_rtlil build/hybrid/optimized.il; hierarchy -check -top hybrid_top; rename -hide; rename -enumerate; check -assert; stat; write_json build/hybrid/core.tmp.json'
+	$(HYBRID_YOSYS) -qL build/hybrid/synthesis.log -p 'read_rtlil build/hybrid/optimized.il; hierarchy -check -top hybrid_top; rename -hide; rename -enumerate; check -assert; tee -o build/hybrid/generic.json stat -json; write_json build/hybrid/core.tmp.json'
 	mv build/hybrid/core.tmp.json build/hybrid/core.json
+
+# Supply the reference library recorded in docs/cpu/hardware-metrics.json.
+hybrid-rob-area: build/hybrid/area-reference.lib hybrid-synth
+	$(HYBRID_YOSYS) -ql build/hybrid/optimized-rob-area.log -s synth/hybrid_rob_area.ys
 
 hybrid-lint:
 	verilator --lint-only --timing -DRISCV_FORMAL \
@@ -96,7 +115,7 @@ hybrid-run: hybrid-compile
 	$(HYBRID_BUILD_DIR)/Vtb_top +operators_only
 
 .PHONY: hybrid-check hybrid-serial-check hybrid-cert
-hybrid-check: hybrid-run hybrid-fabric-check hybrid-budget hybrid-lint
+hybrid-check: hybrid-run hybrid-control-check hybrid-fabric-check hybrid-budget hybrid-lint
 
 hybrid-serial-check:
 	$(MAKE) hybrid-compile HYBRID_BUILD_DIR=build/verilator/hybrid-serial \
