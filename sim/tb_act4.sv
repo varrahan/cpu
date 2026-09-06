@@ -240,41 +240,46 @@ module tb_act4;
     end
 
 `ifdef RISCV_FORMAL
-    wire rvfi_valid, rvfi_trap, rvfi_halt, rvfi_intr;
-    wire [63:0] rvfi_order;
-    wire [31:0] rvfi_insn, rvfi_rs1_rdata, rvfi_rs2_rdata;
-    wire [31:0] rvfi_rd_wdata, rvfi_pc_rdata, rvfi_pc_wdata;
-    wire [31:0] rvfi_mem_addr, rvfi_mem_rdata, rvfi_mem_wdata;
-    wire [4:0] rvfi_rs1_addr, rvfi_rs2_addr, rvfi_rd_addr;
-    wire [3:0] rvfi_mem_rmask, rvfi_mem_wmask;
-    wire [1:0] rvfi_mode, rvfi_ixl;
-    wire rvfi_frd_valid, rvfi_csr_valid;
-    wire [4:0] rvfi_frd_addr;
-    wire [63:0] rvfi_frd_wdata;
-    wire [11:0] rvfi_csr_addr;
-    wire [31:0] rvfi_csr_wdata;
+`ifdef HYBRID
+    localparam RETIRE_LANES=4;
+`else
+    localparam RETIRE_LANES=1;
+`endif
+    wire [RETIRE_LANES-1:0] rvfi_valid, rvfi_trap, rvfi_halt, rvfi_intr;
+    wire [RETIRE_LANES-1:0] [63:0] rvfi_order;
+    wire [RETIRE_LANES-1:0] [31:0] rvfi_insn, rvfi_rs1_rdata, rvfi_rs2_rdata;
+    wire [RETIRE_LANES-1:0] [31:0] rvfi_rd_wdata, rvfi_pc_rdata, rvfi_pc_wdata;
+    wire [RETIRE_LANES-1:0] [31:0] rvfi_mem_addr, rvfi_mem_rdata, rvfi_mem_wdata;
+    wire [RETIRE_LANES-1:0] [4:0] rvfi_rs1_addr, rvfi_rs2_addr, rvfi_rd_addr;
+    wire [RETIRE_LANES-1:0] [3:0] rvfi_mem_rmask, rvfi_mem_wmask;
+    wire [RETIRE_LANES-1:0] [1:0] rvfi_mode, rvfi_ixl;
+    wire [RETIRE_LANES-1:0] rvfi_frd_valid, rvfi_csr_valid;
+    wire [RETIRE_LANES-1:0] [4:0] rvfi_frd_addr;
+    wire [RETIRE_LANES-1:0] [63:0] rvfi_frd_wdata;
+    wire [RETIRE_LANES-1:0] [11:0] rvfi_csr_addr;
+    wire [RETIRE_LANES-1:0] [31:0] rvfi_csr_wdata;
     reg [63:0] expected_order = 0;
 
     always @(posedge clk) begin
-        if (!rst_n) expected_order <= 0;
-        else if (rvfi_valid) begin
-            if (rvfi_mode == 2'b01) saw_supervisor <= 1;
-            if (rvfi_mode == 2'b00) saw_user <= 1;
-            if (rvfi_csr_valid && rvfi_csr_addr == 12'h180 && rvfi_csr_wdata[31])
+        if (!rst_n) expected_order = 0;
+        else for(int lane=0;lane<RETIRE_LANES;lane++) if(rvfi_valid[lane]) begin
+            if (rvfi_mode[lane] == 2'b01) saw_supervisor <= 1;
+            if (rvfi_mode[lane] == 2'b00) saw_user <= 1;
+            if (rvfi_csr_valid[lane] && rvfi_csr_addr[lane] == 12'h180 && rvfi_csr_wdata[lane][31])
                 saw_sv32 <= 1;
-            if (rvfi_order != expected_order)
+            if (rvfi_order[lane] != expected_order)
                 $fatal(1, "RVFI order discontinuity: got %0d expected %0d",
-                       rvfi_order, expected_order);
-            expected_order <= expected_order + 1;
+                       rvfi_order[lane], expected_order);
+            expected_order = expected_order + 1;
             if (rvfi_fd)
                 $fdisplay(rvfi_fd,
                           "%0d %0d %08x %08x %0d %0d %0d %08x %08x %01x %01x %08x %08x %0d %0d %016x %0d %03x %08x",
-                          rvfi_order, rvfi_mode, rvfi_pc_rdata, rvfi_insn,
-                          rvfi_trap, rvfi_intr, rvfi_rd_addr, rvfi_rd_wdata,
-                          rvfi_mem_addr, rvfi_mem_rmask, rvfi_mem_wmask,
-                          rvfi_mem_rdata, rvfi_mem_wdata,
-                          rvfi_frd_valid, rvfi_frd_addr, rvfi_frd_wdata,
-                          rvfi_csr_valid, rvfi_csr_addr, rvfi_csr_wdata);
+                          rvfi_order[lane], rvfi_mode[lane], rvfi_pc_rdata[lane], rvfi_insn[lane],
+                          rvfi_trap[lane], rvfi_intr[lane], rvfi_rd_addr[lane], rvfi_rd_wdata[lane],
+                          rvfi_mem_addr[lane], rvfi_mem_rmask[lane], rvfi_mem_wmask[lane],
+                          rvfi_mem_rdata[lane], rvfi_mem_wdata[lane],
+                          rvfi_frd_valid[lane], rvfi_frd_addr[lane], rvfi_frd_wdata[lane],
+                          rvfi_csr_valid[lane], rvfi_csr_addr[lane], rvfi_csr_wdata[lane]);
         end
     end
 `endif
@@ -287,7 +292,11 @@ module tb_act4;
         end
     end
 
+`ifdef HYBRID
+    hybrid_top dut (
+`else
     top dut (
+`endif
         .clk(clk),
         .rst_n(rst_n),
         .irq_m_software(irq_m_software),
@@ -376,8 +385,14 @@ module tb_act4;
 
         repeat (5) @(posedge clk);
         @(negedge clk);
-        if (reset_high)
+        if (reset_high) begin
+`ifdef HYBRID
+            dut.pc = 32'h8000_0000;
+            dut.fetch_cursor = 32'h8000_0000;
+`else
             dut.u_fetch.u_pc.pc_state = 32'h8000_0000;
+`endif
+        end
         rst_n = 1;
     end
 endmodule

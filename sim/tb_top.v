@@ -1,6 +1,11 @@
 `timescale 1ns/1ps
 
-module tb_top;
+module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
+`ifdef HYBRID
+    localparam TEST_SCALE=8*((307+FABRIC_BITS_PER_CYCLE-1)/FABRIC_BITS_PER_CYCLE);
+`else
+    localparam TEST_SCALE=1;
+`endif
     reg clk;
     reg rst_n;
 
@@ -30,9 +35,11 @@ module tb_top;
     reg [2:0] bus_phase;
     reg inject_imem_error;
     reg inject_dmem_error;
+    reg hold_dmem=0;
     reg irq_m_software, irq_m_timer, irq_m_external;
     reg irq_s_software, irq_s_timer, irq_s_external, nmi;
     reg debug_req, debug_resume, debug_reg_valid, debug_reg_write;
+    reg debug_step=0;
     reg [5:0] debug_reg_addr;
     reg [63:0] debug_reg_wdata;
     wire debug_reg_ready, debug_halted;
@@ -40,7 +47,48 @@ module tb_top;
     wire [31:0] debug_dpc;
 
     assign imem_req_ready = !imem_rsp_valid && bus_phase[0];
-    assign dmem_req_ready = !dmem_rsp_valid && bus_phase[1];
+    assign dmem_req_ready = !hold_dmem && !dmem_rsp_valid && bus_phase[1] &&
+        (!$test$plusargs("parallel_only") || cycle_count%400>300);
+
+`ifdef HYBRID
+    task check_debug_returns;
+        integer mode, cycles;
+        begin
+            for(mode=0;mode<2;mode=mode+1) begin
+                rst_n=0;clear_memories();
+                imem[0]=enc_i(64,0,0,1,7'h13);
+                imem[1]=enc_i(mode?12'h141:12'h341,1,1,0,7'h73);
+                imem[2]=enc_i(12'hfff,0,0,1,7'h13);
+                imem[3]=enc_i(12'h3b0,1,1,0,7'h73);
+                imem[4]=enc_i(31,0,0,1,7'h13);
+                imem[5]=enc_i(12'h3a0,1,1,0,7'h73);
+                imem[6]=mode?enc_i(256,0,0,1,7'h13):32'h000020b7;
+                imem[7]=mode?32'h00000013:enc_i(12'h800,1,0,1,7'h13);
+                imem[8]=enc_i(12'h300,1,1,0,7'h73);
+                imem[9]=mode?32'h10200073:32'h30200073;
+                imem[16]=enc_i(77,0,0,10,7'h13);
+                imem[17]=enc_s(0,10,0,2);
+                imem[18]=enc_j(0,0);
+                reset_cpu();
+                for(cycles=0;cycles<3000*TEST_SCALE;cycles=cycles+1) begin
+                    @(negedge clk);
+                    if(dut.occupancy!=0 && dut.entries[dut.head].instruction==imem[9]) begin
+                        debug_req=1;break;
+                    end
+                end
+                if(!debug_req) $fatal(1,"return instruction never reached the ROB head");
+                repeat(100*TEST_SCALE) @(posedge clk);
+                #1;debug_req=0;
+                if(!debug_halted || debug_dpc!=64)
+                    $fatal(1,"debug return PC: mode=%0d dpc=%h, expected 00000040",mode,debug_dpc);
+                debug_resume=1;@(posedge clk);#1;debug_resume=0;
+                repeat(200*TEST_SCALE) @(posedge clk);
+                if(dmem[0]!=77) $fatal(1,"debug resume missed the return target: mode=%0d",mode);
+            end
+            $display("PASS: debug halt/resume at MRET and SRET retirement");
+        end
+    endtask
+`endif
 
     initial begin
         clk = 0;
@@ -60,17 +108,26 @@ module tb_top;
         end else begin
             if (imem_rsp_valid && imem_rsp_ready)
                 imem_rsp_valid <= 0;
+`ifdef HYBRID
+            // Prefetch may encounter this address before the architectural
+            // instruction. Keep the injected fault until it is consumed.
+            if(dut.rvfi_valid[0] && dut.rvfi_trap[0] && dut.rvfi_pc_rdata[0]==64)
+                inject_imem_error <= 0;
+`endif
             if (imem_req_valid && imem_req_ready) begin
                 imem_rsp_valid <= 1;
                 imem_rsp_rdata <= imem[imem_req_addr[14:2]];
                 imem_rsp_error <= inject_imem_error && imem_req_addr == 64;
+`ifndef HYBRID
                 if (inject_imem_error && imem_req_addr == 64)
                     inject_imem_error <= 0;
+`endif
             end
         end
     end
 
     integer lane;
+    reg cache_trace=0;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             dmem_rsp_valid <= 0;
@@ -80,6 +137,8 @@ module tb_top;
             if (dmem_rsp_valid && dmem_rsp_ready)
                 dmem_rsp_valid <= 0;
             if (dmem_req_valid && dmem_req_ready) begin
+                if(cache_trace && $test$plusargs("memory_trace"))
+                    $display("MEM cycle=%0d write=%0d addr=%h",cycle_count,dmem_req_write,dmem_req_addr);
                 dmem_rsp_valid <= 1;
                 dmem_rsp_rdata <= dmem[dmem_req_addr[14:2]];
                 dmem_rsp_error <= inject_dmem_error && dmem_req_addr == 64;
@@ -127,7 +186,11 @@ module tb_top;
         end
     end
 
+`ifdef HYBRID
+    hybrid_top #(.FABRIC_BITS_PER_CYCLE(FABRIC_BITS_PER_CYCLE)) dut (
+`else
     top dut (
+`endif
         .clk            (clk),
         .rst_n          (rst_n),
         .irq_m_software (irq_m_software),
@@ -149,7 +212,7 @@ module tb_top;
         .debug_halted   (debug_halted),
         .debug_dpc      (debug_dpc),
         .debug_dpc_write(1'b0), .debug_dpc_wdata(32'b0),
-        .debug_step     (1'b0), .debug_privilege(),
+        .debug_step     (debug_step), .debug_privilege(),
         .imem_req_valid (imem_req_valid),
         .imem_req_ready (imem_req_ready),
         .imem_req_addr  (imem_req_addr),
@@ -174,10 +237,7 @@ module tb_top;
 
     integer i;
     integer cycle_count;
-    integer stall_count;
-    integer flush_count;
     integer dmem_read_request_count;
-    integer read_count_before;
     integer program_timeout;
 
     function automatic [31:0] enc_r;
@@ -497,12 +557,15 @@ module tb_top;
             imem[1] = enc_i(4, 0, 3'b010, 4, 7'h03);
             imem[2] = enc_i(256, 0, 3'b000, 5, 7'h13);
             imem[3] = enc_i(0, 5, 3'b010, 2, 7'h03);
-            imem[4] = enc_i(0, 0, 3'b010, 3, 7'h03);
-            imem[5] = enc_s(224, 1, 0, 3'b010);
-            imem[6] = enc_s(228, 4, 0, 3'b010);
-            imem[7] = enc_s(232, 2, 0, 3'b010);
-            imem[8] = enc_s(236, 3, 0, 3'b010);
-            imem[9] = enc_j(0, 0);
+            // Make the final read follow the conflicting fill even when
+            // independent loads can otherwise execute together.
+            imem[4] = 32'h0ff0000f; // FENCE iorw,iorw
+            imem[5] = enc_i(0, 0, 3'b010, 3, 7'h03);
+            imem[6] = enc_s(224, 1, 0, 3'b010);
+            imem[7] = enc_s(228, 4, 0, 3'b010);
+            imem[8] = enc_s(232, 2, 0, 3'b010);
+            imem[9] = enc_s(236, 3, 0, 3'b010);
+            imem[10] = enc_j(0, 0);
         end
     endtask
 
@@ -703,6 +766,138 @@ module tb_top;
         end
     endtask
 
+`ifdef HYBRID
+    integer four_issue_run=0, four_retire_run=0, max_issue_run=0, max_retire_run=0;
+    integer overlap_cycles=0, retired_instructions=0;
+    always @(negedge clk) if(rst_n) begin
+        if($countones(dut.tx_valid[3:0] & dut.tx_ready[3:0])==4) four_issue_run++;
+        else four_issue_run=0;
+        if($countones(dut.rvfi_valid)==4) four_retire_run++;
+        else four_retire_run=0;
+        if(four_issue_run>max_issue_run) max_issue_run=four_issue_run;
+        if(four_retire_run>max_retire_run) max_retire_run=four_retire_run;
+        retired_instructions+=$countones(dut.rvfi_valid);
+        if((|dut.mem_active) && |dut.tx_valid[36+:hybrid_pkg::ALUS] && |dut.tx_valid[35:4]) overlap_cycles++;
+    end
+    integer max_alu_results=0, dual_mul_cycles=0, dual_fp_cycles=0;
+    integer dual_lsu_cycles=0, dual_load_completions=0, canceled_loads=0, mmio_reads=0;
+    always @(negedge clk) if(rst_n) begin
+        if($countones(dut.tx_valid[36+:hybrid_pkg::ALUS])>max_alu_results)
+            max_alu_results=$countones(dut.tx_valid[36+:hybrid_pkg::ALUS]);
+        if(dut.muldivs[0].u_muldiv.busy && dut.muldivs[1].u_muldiv.busy) dual_mul_cycles++;
+        if(dut.fpus[0].u_fpu.busy && dut.fpus[1].u_fpu.busy) dual_fp_cycles++;
+        if(&dut.memory_valid) dual_lsu_cycles++;
+        if(&dut.memory_done) dual_load_completions++;
+        if(|(dut.mem_active & dut.memory_cancel)) canceled_loads++;
+    end
+    always @(posedge clk) begin
+        if(!rst_n) mmio_reads=0;
+        else if(dmem_req_valid && dmem_req_ready && dmem_req_addr==32'h02000000) mmio_reads++;
+    end
+    task check_operators;
+        integer n, cursor, before_retired;
+        begin
+            clear_memories();
+            for(n=0;n<24;n++) imem[n]=enc_i(101+n,0,0,n+1,7'h13);
+            for(n=0;n<24;n++) imem[24+n]=enc_s(1024+4*n,n+1,0,2);
+            imem[48]=enc_j(0,0);
+            // Legal producer backpressure accumulates ready reservations.
+            // Releasing it tests all eight real ALUs and result channels at once.
+            force dut.tx_ready[43:36]=0;
+            reset_cpu();repeat(150*TEST_SCALE) @(posedge clk);
+            @(negedge clk);release dut.tx_ready[43:36];
+            repeat(500*TEST_SCALE) @(posedge clk);
+            if(max_alu_results!=8) $fatal(1,"eight ALUs did not complete together: %0d",max_alu_results);
+            for(n=0;n<24;n++) if(dmem[256+n]!=32'(101+n)) $fatal(1,"ALU result %0d",n);
+
+            rst_n=0;clear_memories();
+            imem[0]=enc_u(20'h6,31,7'h37);
+            imem[1]=enc_i(12'h300,31,1,0,7'h73);
+            imem[2]=enc_i(120,0,0,1,7'h13);
+            imem[3]=enc_i(3,0,0,2,7'h13);
+            imem[4]=enc_u(20'h41400,15,7'h37); // 12.0f
+            imem[5]=enc_fp(7'h78,0,15,0,1);
+            imem[6]=enc_u(20'h40400,16,7'h37); // 3.0f
+            imem[7]=enc_fp(7'h78,0,16,0,2);
+            cursor=8;
+            for(n=0;n<8;n++) begin
+                imem[cursor++]=enc_r(1,2,1,4,3); // DIV 120/3
+                imem[cursor++]=enc_r(1,2,1,4,4);
+                imem[cursor++]=enc_r(1,2,1,0,5); // MUL 120*3
+                imem[cursor++]=enc_r(1,2,1,0,6);
+                imem[cursor++]=enc_fp(7'h0c,2,1,0,3); // FDIV.S 12/3
+                imem[cursor++]=enc_fp(7'h0c,2,1,0,4);
+                for(integer l=0;l<8;l++) imem[cursor++]=enc_i(512+4*l,0,2,7+l,7'h03);
+            end
+            for(n=0;n<12;n++) imem[cursor++]=enc_s(1024+4*n,3+n,0,2);
+            imem[cursor++]=enc_fp_store(1088,3,0,2);
+            imem[cursor++]=enc_fp_store(1092,4,0,2);
+            imem[cursor]=enc_j(0,0);
+            for(n=0;n<8;n++) dmem[128+n]=32'(501+n);
+            reset_cpu();repeat(3000*TEST_SCALE) @(posedge clk);
+            if(dmem[256]!=40 || dmem[257]!=40 || dmem[258]!=360 || dmem[259]!=360 ||
+               dmem[272]!=32'h40800000 || dmem[273]!=32'h40800000)
+                $fatal(1,"parallel M/FPU results: %h %h %h %h %h %h",dmem[256],dmem[257],dmem[258],dmem[259],dmem[272],dmem[273]);
+            for(n=0;n<8;n++) if(dmem[260+n]!=32'(501+n)) $fatal(1,"parallel LSU result %0d",n);
+            if(dual_mul_cycles==0 || dual_fp_cycles==0 || dual_lsu_cycles==0 || dual_load_completions==0)
+                $fatal(1,"missing operator concurrency: M=%0d FP=%0d LSU=%0d load pairs=%0d",dual_mul_cycles,dual_fp_cycles,dual_lsu_cycles,dual_load_completions);
+            $display("PASS: %0d simultaneous ALU results; dual M=%0d, FP=%0d, LSU=%0d cycles; %0d simultaneous load completions",
+                     max_alu_results,dual_mul_cycles,dual_fp_cycles,dual_lsu_cycles,dual_load_completions);
+            for(n=0;n<2;n++) begin
+                rst_n=0;clear_memories();canceled_loads=0;
+                imem[0]=enc_i(128,0,0,1,7'h13);
+                imem[1]=enc_i(12'h305,1,1,0,7'h73);
+                imem[2]=n?enc_i(512,0,0,10,7'h13):enc_u(20'h02000,10,7'h37);
+                imem[3]=enc_i(64,0,2,2,7'h03); // faulting older load
+                imem[4]=enc_i(0,10,2,3,7'h03); // younger MMIO or cached miss
+                imem[5]=enc_s(1028,3,0,2);     // must be squashed
+                imem[6]=enc_j(0,0);
+                imem[32]=enc_i(12'h342,0,2,4,7'h73);
+                imem[33]=enc_s(1024,4,0,2);
+                imem[34]=enc_j(0,0);
+                inject_dmem_error=1;hold_dmem=1;
+                reset_cpu();repeat(150*TEST_SCALE) @(posedge clk);
+                @(negedge clk);hold_dmem=0;
+                repeat(700*TEST_SCALE) @(posedge clk);
+                if(dmem[256]!=5 || dmem[257]!=0 || mmio_reads!=0 || canceled_loads==0)
+                    $fatal(1,"LSU fault recovery case %0d: cause=%0d younger=%0d MMIO=%0d cancel=%0d",n,dmem[256],dmem[257],mmio_reads,canceled_loads);
+            end
+            $display("PASS: dual LSU fault recovery drains cache misses and suppresses younger MMIO");
+            rst_n=0;clear_memories();
+            imem[0]=enc_i(17,0,0,1,7'h13);
+            imem[1]=enc_i(512,0,2,2,7'h03);
+            imem[2]=enc_i(516,0,2,3,7'h03);
+            imem[3]=enc_s(1024,1,0,2);
+            imem[4]=enc_j(0,0);
+            dmem[128]=21;dmem[129]=22;
+            debug_req=1;reset_cpu();repeat(100*TEST_SCALE) @(posedge clk);
+            if(!debug_halted || debug_dpc!=0) $fatal(1,"initial single-step halt");
+            for(n=0;n<3;n++) begin
+                @(negedge clk);debug_req=0;debug_step=1;before_retired=retired_instructions;
+                // The first step must halt even with the data bus blocked:
+                // its younger loads must not delay debug entry.
+                hold_dmem=n==0;
+                debug_resume=1;@(posedge clk);#1;debug_resume=0;
+                repeat(400*TEST_SCALE) @(posedge clk);
+                @(negedge clk);
+                if(!debug_halted || debug_dpc!=32'(4*(n+1)) || retired_instructions-before_retired!=1 || dmem[256]!=0)
+                    $fatal(1,"single step %0d retired %0d instructions, PC=%h halted=%0d",n,retired_instructions-before_retired,debug_dpc,debug_halted);
+            end
+            hold_dmem=0;debug_step=0;
+            $display("PASS: single-step retires exactly one instruction with adjacent independent loads");
+        end
+    endtask
+    task load_parallel;
+        begin
+            for(integer r=1;r<=8;r++) imem[r-1]=enc_i(r,0,0,r,7'h13);
+            imem[8]=32'h02000537; // x10 = uncached address 0x02000000
+            imem[9]=enc_i(0,10,2,9,7'h03);
+            for(integer n=0;n<48;n++) imem[10+n]=enc_r(0,2+(2*n)%8,1+(2*n)%8,0,16+n%16);
+            imem[58]=enc_j(-196,0);
+        end
+    endtask
+`endif
+
     task load_rv32gc_stress;
         begin
             $readmemh("build/programs/rv32gc_stress.hex", imem);
@@ -712,7 +907,7 @@ module tb_top;
     task reset_cpu;
         begin
             rst_n = 0;
-            repeat (3) @(posedge clk);
+            repeat (3*TEST_SCALE) @(posedge clk);
             rst_n = 1;
         end
     endtask
@@ -720,23 +915,29 @@ module tb_top;
     always @(posedge clk) begin
         if (rst_n) begin
             cycle_count = cycle_count + 1;
-`ifndef NETLIST_SIM
-            if (dut.stall_haz) stall_count = stall_count + 1;
-            if (dut.branch_mispredict_ex) flush_count = flush_count + 1;
-`endif
         end
     end
 
     always @(posedge clk)
-        if (rst_n && dmem_req_valid && dmem_req_ready && !dmem_req_write)
-            dmem_read_request_count = dmem_read_request_count + 1;
+        if (!rst_n) dmem_read_request_count <= 0;
+        else if (dmem_req_valid && dmem_req_ready && !dmem_req_write)
+            dmem_read_request_count <= dmem_read_request_count + 1;
+
+`ifdef HYBRID
+    always @(negedge clk) if (rst_n && $test$plusargs("retire_trace")) begin
+        for (int l=0;l<4;l++)
+            if(dut.rvfi_valid[l]) $display("RET %0d pc=%h insn=%h x%0d=%h trap=%b",
+                dut.rvfi_order[l], dut.rvfi_pc_rdata[l], dut.rvfi_insn[l],
+                dut.rvfi_rd_addr[l], dut.rvfi_rd_wdata[l], dut.rvfi_trap[l]);
+    end
+`endif
 
     initial begin
-        $dumpfile("build/top_wave.vcd");
-        $dumpvars(0, tb_top);
+        if ($test$plusargs("trace")) begin
+            $dumpfile("build/top_wave.vcd");
+            $dumpvars(0, tb_top);
+        end
         cycle_count = 0;
-        stall_count = 0;
-        flush_count = 0;
         inject_imem_error = 0;
         inject_dmem_error = 0;
         irq_m_software = 0;
@@ -752,13 +953,29 @@ module tb_top;
         debug_reg_write = 0;
         debug_reg_addr = 0;
         debug_reg_wdata = 0;
-        dmem_read_request_count = 0;
         rst_n = 0;
 
+`ifdef HYBRID
+        if($test$plusargs("operators_only")) begin check_operators();$finish;end
+        if($test$plusargs("debug_return_only")) begin check_debug_returns();$finish;end
+        if($test$plusargs("parallel_only")) begin
+            clear_memories();load_parallel();dmem[0]=123;
+            reset_cpu();repeat(4000) @(posedge clk);
+            if(max_issue_run<8 || max_retire_run<8)
+                $fatal(1,"four-wide throughput missing: issue=%0d retire=%0d",max_issue_run,max_retire_run);
+            if(overlap_cycles==0) $fatal(1,"memory/operand/result traffic never overlapped");
+            for(integer r=16;r<32;r++)
+                if(dut.registers[0][dut.committed[0][r]]!=64'(3+4*((r-16)%4)))
+                    $fatal(1,"parallel register result x%0d",r);
+            $display("PASS: four-wide issue=%0d consecutive cycles, retire=%0d; overlap=%0d; retired=%0d",
+                     max_issue_run,max_retire_run,overlap_cycles,retired_instructions);
+            $finish;
+        end
+`endif
         clear_memories();
         load_fibonacci();
         reset_cpu();
-        repeat (300) @(posedge clk);
+        repeat (300*TEST_SCALE) @(posedge clk);
 
         if (dmem[0] != 32'd55)
             $fatal(1, "Fibonacci: got %0d, expected 55", dmem[0]);
@@ -766,7 +983,7 @@ module tb_top;
         clear_memories();
         load_memory_hazards();
         reset_cpu();
-        repeat (300) @(posedge clk);
+        repeat (300*TEST_SCALE) @(posedge clk);
 
         if (dmem[2] != 32'd43 || dmem[3] != 32'hffff_ff80 ||
             dmem[4] != 32'h0000_0080 || dmem[5] != 32'hffff_8001 ||
@@ -778,7 +995,7 @@ module tb_top;
         clear_memories();
         load_machine_trap();
         reset_cpu();
-        repeat (300) @(posedge clk);
+        repeat (300*TEST_SCALE) @(posedge clk);
 
         if (dmem[8] != 32'd3 || dmem[7] != 32'd99)
             $fatal(1, "Machine trap failure: mcause=%0d marker=%0d",
@@ -788,7 +1005,7 @@ module tb_top;
         clear_memories();
         load_integer_and_control();
         reset_cpu();
-        repeat (1200) @(posedge clk);
+        repeat (1200*TEST_SCALE) @(posedge clk);
 
         if (dmem[10] != 32'hffff_fffb || dmem[11] != 32'hffff_fff5 ||
             dmem[12] != 32'd12 || dmem[13] != 32'hffff_fffb ||
@@ -803,7 +1020,7 @@ module tb_top;
         clear_memories();
         load_csr_operations();
         reset_cpu();
-        repeat (700) @(posedge clk);
+        repeat (700*TEST_SCALE) @(posedge clk);
 
         if (dmem[24] != 0 || dmem[25] != 32'h55 || dmem[26] != 32'h55 ||
             dmem[27] != 32'h50 || dmem[28] != 3 || dmem[29] != 7 ||
@@ -816,7 +1033,7 @@ module tb_top;
         clear_memories();
         load_synchronous_traps();
         reset_cpu();
-        repeat (1200) @(posedge clk);
+        repeat (1200*TEST_SCALE) @(posedge clk);
 
         if (dmem[32] != 2 || dmem[33] != 11 || dmem[34] != 4 ||
             dmem[35] != 6 || dmem[40] != 32'hffff_ffff ||
@@ -829,7 +1046,7 @@ module tb_top;
         load_data_access_fault();
         inject_dmem_error = 1;
         reset_cpu();
-        repeat (700) @(posedge clk);
+        repeat (700*TEST_SCALE) @(posedge clk);
 
         if (dmem[50] != 77 || dmem[51] != 5)
             $fatal(1, "Data access-fault regression failure");
@@ -839,7 +1056,7 @@ module tb_top;
         load_instruction_access_fault();
         inject_imem_error = 1;
         reset_cpu();
-        repeat (700) @(posedge clk);
+        repeat (700*TEST_SCALE) @(posedge clk);
 
         if (dmem[52] != 77 || dmem[53] != 1)
             $fatal(1, "Instruction access-fault regression failure");
@@ -849,7 +1066,7 @@ module tb_top;
         load_store_access_fault();
         inject_dmem_error = 1;
         reset_cpu();
-        repeat (700) @(posedge clk);
+        repeat (700*TEST_SCALE) @(posedge clk);
 
         if (dmem[16] != 0 || dmem[54] != 77 || dmem[55] != 7)
             $fatal(1, "Store access-fault regression failure");
@@ -857,23 +1074,25 @@ module tb_top;
         rst_n = 0;
         clear_memories();
         load_cache_conflicts();
+        cache_trace=1;
         dmem[0] = 11;
         dmem[1] = 12;
         dmem[64] = 22;
-        read_count_before = dmem_read_request_count;
         reset_cpu();
-        repeat (700) @(posedge clk);
+        repeat (700*TEST_SCALE) @(posedge clk);
 
         if (dmem[56] != 11 || dmem[57] != 12 ||
             dmem[58] != 22 || dmem[59] != 11 ||
-            dmem_read_request_count - read_count_before != 12)
-            $fatal(1, "D-cache hit/conflict regression failure");
+            dmem_read_request_count != 12)
+            $fatal(1, "D-cache hit/conflict regression: values=%0d/%0d/%0d/%0d reads=%0d (expected 11/12/22/11, 12 reads)",
+                dmem[56],dmem[57],dmem[58],dmem[59],dmem_read_request_count);
+        cache_trace=0;
 
         rst_n = 0;
         clear_memories();
         load_rv32m();
         reset_cpu();
-        repeat (700) @(posedge clk);
+        repeat (700*TEST_SCALE) @(posedge clk);
 
         if (dmem[0] != 32'hffff_ffeb || dmem[1] != 32'hffff_ffff ||
             dmem[2] != 32'hffff_ffff || dmem[3] != 2 ||
@@ -885,7 +1104,7 @@ module tb_top;
         clear_memories();
         load_rv32a();
         reset_cpu();
-        repeat (700) @(posedge clk);
+        repeat (700*TEST_SCALE) @(posedge clk);
 
         if (dmem[0] != 10 || dmem[1] != 0 || dmem[2] != 1 ||
             dmem[3] != 5 || dmem[4] != 10 || dmem[16] != 10)
@@ -895,7 +1114,7 @@ module tb_top;
         clear_memories();
         load_rv32fd();
         reset_cpu();
-        repeat (1400) @(posedge clk);
+        repeat (1400*TEST_SCALE) @(posedge clk);
 
         if (dmem[0] != 32'h4070_0000 || dmem[1] != 32'h4058_0000 ||
             dmem[2] != 3 || dmem[4] != 0 || dmem[5] != 32'h400e_0000 ||
@@ -908,11 +1127,11 @@ module tb_top;
         clear_memories();
         load_machine_interrupt();
         reset_cpu();
-        repeat (250) @(posedge clk);
+        repeat (250*TEST_SCALE) @(posedge clk);
         irq_m_external = 1;
-        repeat (250) @(posedge clk);
+        repeat (250*TEST_SCALE) @(posedge clk);
         irq_m_external = 0;
-        repeat (350) @(posedge clk);
+        repeat (350*TEST_SCALE) @(posedge clk);
 
         if (dmem[0] != 42 || dmem[1] != 32'h8000_000b ||
             dmem[2][0] != 0)
@@ -923,7 +1142,7 @@ module tb_top;
         clear_memories();
         load_supervisor_user();
         reset_cpu();
-        repeat (1400) @(posedge clk);
+        repeat (1400*TEST_SCALE) @(posedge clk);
 
         if (dmem[0] != 77 || dmem[1] != 8 || dmem[2] != 99)
             $fatal(1, "Supervisor/user regression failure: %h %h %h",
@@ -933,7 +1152,7 @@ module tb_top;
         clear_memories();
         load_sv32_system();
         reset_cpu();
-        repeat (2400) @(posedge clk);
+        repeat (2400*TEST_SCALE) @(posedge clk);
 
         if (dmem[4096] != 123 || dmem[4097] != 123 ||
             !dmem[2048][6] || dmem[5120][7:6] != 2'b11)
@@ -946,9 +1165,9 @@ module tb_top;
         imem[1] = enc_i(1, 1, 3'b000, 1, 7'h13);
         imem[2] = enc_j(0, 0);
         reset_cpu();
-        repeat (200) @(posedge clk);
+        repeat (200*TEST_SCALE) @(posedge clk);
         debug_req = 1;
-        repeat (20) @(posedge clk);
+        repeat (20*TEST_SCALE) @(posedge clk);
         debug_req = 0;
         if (!debug_halted || debug_dpc[0])
             $fatal(1, "Debug halt regression failure");
@@ -965,12 +1184,15 @@ module tb_top;
         @(posedge clk); #1;
         debug_resume = 0;
         if (debug_halted) $fatal(1, "Debug resume regression failure");
+`ifdef HYBRID
+        check_debug_returns();
+`endif
 
         rst_n = 0;
         clear_memories();
         load_compressed_system();
         reset_cpu();
-        repeat (700) @(posedge clk);
+        repeat (700*TEST_SCALE) @(posedge clk);
         if (dmem[0] != 2 || dmem[1] != 5)
             $fatal(1, "Compressed/cross-word regression failure: %h %h",
                    dmem[0], dmem[1]);
@@ -979,11 +1201,11 @@ module tb_top;
         clear_memories();
         load_wfi_interrupt();
         reset_cpu();
-        repeat (300) @(posedge clk);
+        repeat (300*TEST_SCALE) @(posedge clk);
         irq_m_external = 1;
-        repeat (200) @(posedge clk);
+        repeat (200*TEST_SCALE) @(posedge clk);
         irq_m_external = 0;
-        repeat (400) @(posedge clk);
+        repeat (400*TEST_SCALE) @(posedge clk);
         if (dmem[0] != 66 || dmem[1] != 32'h8000_000b)
             $fatal(1, "WFI wake regression failure: %h %h",
                    dmem[0], dmem[1]);
@@ -992,13 +1214,13 @@ module tb_top;
         clear_memories();
         load_wfi_masked_interrupt();
         reset_cpu();
-        repeat (300) @(posedge clk);
+        repeat (300*TEST_SCALE) @(posedge clk);
         if (dmem[0] != 0)
             $fatal(1, "WFI did not sleep before masked interrupt");
         irq_m_external = 1;
-        repeat (200) @(posedge clk);
+        repeat (200*TEST_SCALE) @(posedge clk);
         irq_m_external = 0;
-        repeat (200) @(posedge clk);
+        repeat (200*TEST_SCALE) @(posedge clk);
         if (dmem[0] != 67)
             $fatal(1, "WFI ignored masked pending interrupt");
 
@@ -1007,7 +1229,7 @@ module tb_top;
         load_rv32gc_stress();
         reset_cpu();
         program_timeout = 0;
-        while (dmem[256] != 32'h600d_600d && program_timeout < 12000) begin
+        while (dmem[256] != 32'h600d_600d && program_timeout < 12000*TEST_SCALE) begin
             @(posedge clk);
             program_timeout = program_timeout + 1;
         end
