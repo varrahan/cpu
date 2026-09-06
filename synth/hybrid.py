@@ -43,7 +43,7 @@ for original in args.sources:
     destination.write_text(translate_off.sub("", original.read_text()))
     sources.append(str(destination))
 with (ROOT / "build/hybrid/core.v").open("w") as output:
-    subprocess.run([str(converter), "-EAlways", "-DHYBRID", "-DSYNTHESIS", "-DVERILATOR",
+    subprocess.run([str(converter), "-EAlways", "-DSYNTHESIS", "-DVERILATOR",
                     "-I" + str(ROOT), "-I" + str(ROOT / "third_party/common_cells/include"),
                     "--top=hybrid_top", *sources], stdout=output, check=True)
 
