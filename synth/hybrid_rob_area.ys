@@ -1,0 +1,19 @@
+# Same SKY130 HD reference as docs/cpu/hardware-metrics.json.
+# Keep row hierarchy, and include shared decode overhead in the design total.
+read_rtlil build/hybrid/optimized.il
+tee -o build/hybrid/generic.json stat -json -top hybrid_top
+hierarchy -check -top hybrid_rob
+rename -hide
+opt -full -purge -keepdc
+wreduce
+rename -enumerate
+techmap
+opt -fast -purge
+dfflibmap -liberty build/hybrid/area-reference.lib
+abc -liberty build/hybrid/area-reference.lib
+clean
+select -assert-none t:$*
+tee -o build/hybrid/optimized-rob-area.json stat -json -liberty build/hybrid/area-reference.lib
+read_liberty -lib build/hybrid/area-reference.lib
+hierarchy -check -top hybrid_rob
+check -assert

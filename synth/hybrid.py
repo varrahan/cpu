@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -45,7 +46,8 @@ for original in args.sources:
 with (ROOT / "build/hybrid/core.v").open("w") as output:
     subprocess.run([str(converter), "-EAlways", "-DSYNTHESIS", "-DVERILATOR",
                     "-I" + str(ROOT), "-I" + str(ROOT / "third_party/common_cells/include"),
-                    "--top=hybrid_top", *sources], stdout=output, check=True)
+                    "--top=hybrid_top", *sources], stdout=output, check=True,
+                   env=os.environ | {"GHCRTS": os.environ.get("GHCRTS", "-N2 -M2G")})
 
 # Keep the native RTLIL top cache valid when only a child module changes.
 converted = (ROOT / "build/hybrid/core.v").read_text()

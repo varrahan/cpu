@@ -1,0 +1,11 @@
+read_rtlil build/hybrid/core.il
+# Expose constants and common logic across small combinational boundaries.
+# Keep ROB rows, memories and FP pipelines hierarchical to bound host memory.
+flatten t:hybrid_scheduler t:decoder t:rvc_decompressor t:alu
+opt -fast -purge -keepdc
+wreduce
+# ponytail: coarse reduction on the large top; fine consolidation stays in bounded block maps.
+opt -purge -keepdc
+opt_share
+opt -fast -purge -keepdc
+write_rtlil build/hybrid/optimized.tmp.il
