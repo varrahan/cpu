@@ -240,11 +240,7 @@ module tb_act4;
     end
 
 `ifdef RISCV_FORMAL
-`ifdef HYBRID
     localparam RETIRE_LANES=4;
-`else
-    localparam RETIRE_LANES=1;
-`endif
     wire [RETIRE_LANES-1:0] rvfi_valid, rvfi_trap, rvfi_halt, rvfi_intr;
     wire [RETIRE_LANES-1:0] [63:0] rvfi_order;
     wire [RETIRE_LANES-1:0] [31:0] rvfi_insn, rvfi_rs1_rdata, rvfi_rs2_rdata;
@@ -292,11 +288,7 @@ module tb_act4;
         end
     end
 
-`ifdef HYBRID
     hybrid_top dut (
-`else
-    top dut (
-`endif
         .clk(clk),
         .rst_n(rst_n),
         .irq_m_software(irq_m_software),
@@ -386,12 +378,8 @@ module tb_act4;
         repeat (5) @(posedge clk);
         @(negedge clk);
         if (reset_high) begin
-`ifdef HYBRID
             dut.pc = 32'h8000_0000;
             dut.fetch_cursor = 32'h8000_0000;
-`else
-            dut.u_fetch.u_pc.pc_state = 32'h8000_0000;
-`endif
         end
         rst_n = 1;
     end

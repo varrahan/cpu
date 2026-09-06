@@ -18,7 +18,7 @@ module tb_extended_units;
     reg [31:0] mul_a, mul_b;
     wire mul_ready, mul_busy, mul_done;
     wire [31:0] mul_result;
-    P_MULDIV32 muldiv (
+    muldiv_unit muldiv (
         .clk(clk), .rst_n(rst_n), .start(mul_start), .flush(mul_flush),
         .op(mul_op), .a(mul_a), .b(mul_b), .ready(mul_ready),
         .busy(mul_busy), .done(mul_done), .result(mul_result)

@@ -1,11 +1,7 @@
 `timescale 1ns/1ps
 
 module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
-`ifdef HYBRID
     localparam TEST_SCALE=8*((307+FABRIC_BITS_PER_CYCLE-1)/FABRIC_BITS_PER_CYCLE);
-`else
-    localparam TEST_SCALE=1;
-`endif
     reg clk;
     reg rst_n;
 
@@ -50,7 +46,6 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
     assign dmem_req_ready = !hold_dmem && !dmem_rsp_valid && bus_phase[1] &&
         (!$test$plusargs("parallel_only") || cycle_count%400>300);
 
-`ifdef HYBRID
     task check_debug_returns;
         integer mode, cycles;
         begin
@@ -88,7 +83,6 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
             $display("PASS: debug halt/resume at MRET and SRET retirement");
         end
     endtask
-`endif
 
     initial begin
         clk = 0;
@@ -108,20 +102,14 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
         end else begin
             if (imem_rsp_valid && imem_rsp_ready)
                 imem_rsp_valid <= 0;
-`ifdef HYBRID
             // Prefetch may encounter this address before the architectural
             // instruction. Keep the injected fault until it is consumed.
             if(dut.rvfi_valid[0] && dut.rvfi_trap[0] && dut.rvfi_pc_rdata[0]==64)
                 inject_imem_error <= 0;
-`endif
             if (imem_req_valid && imem_req_ready) begin
                 imem_rsp_valid <= 1;
                 imem_rsp_rdata <= imem[imem_req_addr[14:2]];
                 imem_rsp_error <= inject_imem_error && imem_req_addr == 64;
-`ifndef HYBRID
-                if (inject_imem_error && imem_req_addr == 64)
-                    inject_imem_error <= 0;
-`endif
             end
         end
     end
@@ -186,11 +174,7 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
         end
     end
 
-`ifdef HYBRID
     hybrid_top #(.FABRIC_BITS_PER_CYCLE(FABRIC_BITS_PER_CYCLE)) dut (
-`else
-    top dut (
-`endif
         .clk            (clk),
         .rst_n          (rst_n),
         .irq_m_software (irq_m_software),
@@ -766,7 +750,6 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
         end
     endtask
 
-`ifdef HYBRID
     integer four_issue_run=0, four_retire_run=0, max_issue_run=0, max_retire_run=0;
     integer overlap_cycles=0, retired_instructions=0;
     always @(negedge clk) if(rst_n) begin
@@ -896,7 +879,6 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
             imem[58]=enc_j(-196,0);
         end
     endtask
-`endif
 
     task load_rv32gc_stress;
         begin
@@ -923,14 +905,12 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
         else if (dmem_req_valid && dmem_req_ready && !dmem_req_write)
             dmem_read_request_count <= dmem_read_request_count + 1;
 
-`ifdef HYBRID
     always @(negedge clk) if (rst_n && $test$plusargs("retire_trace")) begin
         for (int l=0;l<4;l++)
             if(dut.rvfi_valid[l]) $display("RET %0d pc=%h insn=%h x%0d=%h trap=%b",
                 dut.rvfi_order[l], dut.rvfi_pc_rdata[l], dut.rvfi_insn[l],
                 dut.rvfi_rd_addr[l], dut.rvfi_rd_wdata[l], dut.rvfi_trap[l]);
     end
-`endif
 
     initial begin
         if ($test$plusargs("trace")) begin
@@ -955,7 +935,6 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
         debug_reg_wdata = 0;
         rst_n = 0;
 
-`ifdef HYBRID
         if($test$plusargs("operators_only")) begin check_operators();$finish;end
         if($test$plusargs("debug_return_only")) begin check_debug_returns();$finish;end
         if($test$plusargs("parallel_only")) begin
@@ -971,7 +950,6 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
                      max_issue_run,max_retire_run,overlap_cycles,retired_instructions);
             $finish;
         end
-`endif
         clear_memories();
         load_fibonacci();
         reset_cpu();
@@ -1184,9 +1162,7 @@ module tb_top #(parameter integer FABRIC_BITS_PER_CYCLE=307);
         @(posedge clk); #1;
         debug_resume = 0;
         if (debug_halted) $fatal(1, "Debug resume regression failure");
-`ifdef HYBRID
         check_debug_returns();
-`endif
 
         rst_n = 0;
         clear_memories();
