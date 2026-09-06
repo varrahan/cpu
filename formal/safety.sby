@@ -11,16 +11,16 @@ depth 12
 smtbmc --nomem --unroll z3
 
 [script]
-dcache: read -formal -sv -D FORMAL formal_models.sv dcache.v safety_harness.sv
+dcache: read -formal -sv -D FORMAL formal_models.sv dcache.sv safety_harness.sv
 dcache: prep -top dcache_harness
-mmu: read -formal -sv -D FORMAL formal_models.sv sv32_mmu.v safety_harness.sv
+mmu: read -formal -sv -D FORMAL formal_models.sv sv32_mmu.sv safety_harness.sv
 mmu: prep -top mmu_harness
-arbiter: read -formal -sv -D FORMAL formal_models.sv memory_arbiter4.v safety_harness.sv
+arbiter: read -formal -sv -D FORMAL formal_models.sv memory_arbiter4.sv safety_harness.sv
 arbiter: prep -top arbiter_harness
 
 [files]
 formal/formal_models.sv
-rtl/memory/dcache.v
-rtl/memory/sv32_mmu.v
-rtl/memory/memory_arbiter4.v
+rtl/memory/dcache.sv
+rtl/memory/sv32_mmu.sv
+rtl/memory/memory_arbiter4.sv
 formal/safety_harness.sv

@@ -6,8 +6,8 @@ depth 1
 smtbmc z3
 
 [script]
-read -formal -D FORMAL pmp_checker.v
+read -formal -sv -D FORMAL pmp_checker.sv
 prep -top pmp_checker
 
 [files]
-rtl/memory/pmp_checker.v
+rtl/memory/pmp_checker.sv
