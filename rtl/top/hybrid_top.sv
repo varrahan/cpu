@@ -86,6 +86,16 @@ module hybrid_top #(
     wire [ROB*$bits(entry_t)-1:0] rob_data;
     for(genvar row=0;row<ROB;row++)
         assign entries[row]=rob_data[row*$bits(entry_t)+:$bits(entry_t)];
+    writeback_info_t writeback_info[ROB];
+    issue_info_t issue_info[ROB];
+    for(genvar row=0;row<ROB;row++) begin: metadata
+        assign writeback_info[row]={entries[row].valid,entries[row].dest_valid,
+            entries[row].dest_fp,entries[row].pdst};
+        assign issue_info[row]={entries[row].instruction,entries[row].pc,
+            entries[row].src_used,entries[row].src_fp,entries[row].src,
+            is_memory(entries[row].d)?4'(LSU_BASE):entries[row].d.fp_compute?4'(FP_BASE):
+            entries[row].d.muldiv?4'(MUL_BASE):4'b0};
+    end
     logic [4:0] prf_raddr[16][2], prf_waddr[16];
     logic [63:0] prf_rdata[16][2], prf_wdata[16];
     logic [15:0] prf_we;
@@ -111,7 +121,8 @@ module hybrid_top #(
     logic [PHYS-1:0] free_regs[2], reg_ready[2];
     logic [PHYS-1:0] acknowledged[2];
     logic [6:0] head, tail;
-    integer occupancy, allocation_bank, queue_count, memory_count;
+    integer occupancy, allocation_bank;
+    wire [7:0] queue_count, memory_count;
     logic [31:0] pc, epoch;
     logic frontend_blocked;
     logic [31:0] line_address[8], line_cause[8];
@@ -204,9 +215,6 @@ module hybrid_top #(
     function automatic logic is_memory(input decode_t d);
         return d.mem_read || d.mem_write || d.fp_load || d.fp_store || d.amo;
     endfunction
-    function automatic logic older(input integer candidate, input integer current);
-        return current<0 || 7'(candidate-int'(head))<7'(current-int'(head));
-    endfunction
     function automatic logic is_control(input decode_t d);
         return d.branch || d.jal || d.jalr || d.csr_en || d.fence || d.fence_i ||
                d.mret || d.sret || d.sfence_vma || d.wfi || d.ecall || d.ebreak;
@@ -296,62 +304,32 @@ module hybrid_top #(
         .dmem_req_valid,.dmem_req_ready,.dmem_req_write,.dmem_req_addr,.dmem_req_wdata,.dmem_req_be,
         .dmem_req_amo,.dmem_req_amo_op,.reservation_invalidate,
         .dmem_rsp_valid,.dmem_rsp_ready,.dmem_rsp_rdata,.dmem_rsp_error);
-    // Oldest-ready issue. The ROB carries IQ payloads; at most IQ entries may
-    // wait for issue. Four selectors reserve distinct instructions.
-    always_comb begin: select_work
-        logic [ROB-1:0] operands_ready, memory_eligible, execute_ready;
-        logic already, available;
-        integer s, first_memory, second_memory, category;
-        s=0;category=0;queue_count=0;memory_count=0;
-        first_memory=-1;second_memory=-1;memory_eligible='0;
-        for(int j=0;j<ROB;j++) begin
-            if(entries[j].valid && !entries[j].issued && !entries[j].done) queue_count++;
-            if(entries[j].valid && is_memory(entries[j].d)) memory_count++;
-            if(entries[j].valid && is_memory(entries[j].d) && !entries[j].done && older(j,first_memory))
-                first_memory=j;
-            execute_ready[j]=entries[j].valid && entries[j].command && !entries[j].executed &&
-                (entries[j].received | ~entries[j].src_used)==3'b111;
-            operands_ready[j]=1;
-            for(int p=0;p<3;p++)
-                if(entries[j].src_used[p] && !reg_ready[entries[j].src_fp[p]][entries[j].src[p]])
-                    operands_ready[j]=0;
-        end
-        for(int j=0;j<ROB;j++)
-            if(entries[j].valid && is_memory(entries[j].d) && !entries[j].done && j!=first_memory && older(j,second_memory))
-                second_memory=j;
-        // Two oldest plain loads may translate and read concurrently. Stores
-        // and atomics wait at head; the memory stage gates MMIO after translation.
-        if(first_memory>=0) begin
-            memory_eligible[first_memory]=first_memory==int'(head) ||
-                !(entries[first_memory].d.mem_write || entries[first_memory].d.fp_store || entries[first_memory].d.amo);
-            if(second_memory>=0 && !(entries[first_memory].d.mem_write || entries[first_memory].d.fp_store || entries[first_memory].d.amo) &&
-                !(entries[second_memory].d.mem_write || entries[second_memory].d.fp_store || entries[second_memory].d.amo))
-                memory_eligible[second_memory]=1;
-        end
-        for(int l=0;l<4;l++) begin
-            selected[l]=-1;
-            for(int slot=0;slot<ROB;slot++) begin
-                already=0;
-                for(int prev=0;prev<l;prev++) if(selected[prev]==slot) already=1;
-                if(older(slot,selected[l]) && entries[slot].valid && !entries[slot].issued && !entries[slot].done &&
-                    operands_ready[slot] && !already && (!is_control(entries[slot].d) || slot==int'(head)))
-                    selected[l]=slot;
-            end
-        end
-        // Commands reserve a unit class. Each available physical unit takes a
-        // distinct oldest ready reservation, avoiding affinity to an issue lane.
-        for(int e=0;e<UNITS;e++) begin
-            executing[e]=-1;
-            category=e<ALUS?0:e<FP_BASE?MUL_BASE:e<LSU_BASE?FP_BASE:LSU_BASE;
-            available=e<ALUS?1:e<FP_BASE?!mul_active[e-MUL_BASE]:
-                      e<LSU_BASE?!fp_active[e-FP_BASE]:!mem_active[e-LSU_BASE];
-            for(int slot=0;slot<ROB;slot++) begin
-                if(available && execute_ready[slot] && older(slot,executing[e]) &&
-                   entries[slot].unit_id==category && (e<LSU_BASE || memory_eligible[slot]))
-                    executing[e]=slot;
-            end
-            if(executing[e]>=0) execute_ready &= ~(ROB'(1)<<executing[e]);
-        end
+    wire [ROB-1:0] waiting, issue_ready, memory_live, memory_pending, memory_ordered_rows;
+    wire [ROB-1:0] class_ready[4];
+    for(genvar row=0;row<ROB;row++) begin: readiness
+        wire [2:0] source_ready;
+        wire execute_ready=entries[row].valid && entries[row].command && !entries[row].executed &&
+            (entries[row].received | ~entries[row].src_used)==3'b111;
+        for(genvar p=0;p<3;p++)
+            assign source_ready[p]=!entries[row].src_used[p] ||
+                reg_ready[entries[row].src_fp[p]][entries[row].src[p]];
+        assign waiting[row]=entries[row].valid && !entries[row].issued && !entries[row].done;
+        assign issue_ready[row]=waiting[row] && (&source_ready) &&
+            (!is_control(entries[row].d) || 7'(row)==head);
+        assign memory_live[row]=entries[row].valid && is_memory(entries[row].d);
+        assign memory_pending[row]=memory_live[row] && !entries[row].done;
+        assign memory_ordered_rows[row]=entries[row].d.mem_write || entries[row].d.fp_store || entries[row].d.amo;
+        assign class_ready[0][row]=execute_ready && entries[row].unit_id==0;
+        assign class_ready[1][row]=execute_ready && entries[row].unit_id==MUL_BASE;
+        assign class_ready[2][row]=execute_ready && entries[row].unit_id==FP_BASE;
+        assign class_ready[3][row]=execute_ready && entries[row].unit_id==LSU_BASE;
+    end
+    hybrid_scheduler scheduler (.head,.waiting,.issue_ready,.memory_live,.memory_pending,
+        .memory_ordered(memory_ordered_rows),.class_ready,.mul_active,.fp_active,.mem_active,
+        .selected,.executing,.queue_count,.memory_count);
+    always_comb begin: execution_operands
+        integer s;
+        s=0;
         for(int e=0;e<ALUS;e++) begin
             alu_a[e]=0;alu_b[e]=0;alu_op[e]=0;
             if(executing[e]>=0) begin
@@ -384,6 +362,8 @@ module hybrid_top #(
         logic [2:0] completed[4];
         logic [31:0] wanted;
         entry_t e;
+        writeback_info_t destination;
+        issue_info_t command;
         integer o;
         tx_valid=0;rx_ready=0;
         prf_we=0;
@@ -395,21 +375,21 @@ module hybrid_top #(
             prf_raddr[k][0]=0;prf_raddr[k][1]=0;
         end
         for(int k=0;k<4;k++) completed[k]=served[k];
-        s=0;u=0;b=0;p=0;packet='0;wanted=0;e='0;o=0;
+        s=0;u=0;b=0;p=0;packet='0;wanted=0;e='0;destination='0;command='0;o=0;
         // Results have a dedicated producer wavelength, even when several
         // units finish together. Bank conflicts are local, never global.
         for(int k=RESULT;k<RESULT+UNITS;k++) if(rx_valid[k]) begin
-            s=int'(rx[k].slot); e=entries[s];
-            if(rx[k].epoch!=epoch || !e.valid) rx_ready[k]=1;
-            else if(!e.dest_valid || rx[k].kind==9) rx_ready[k]=1;
+            s=int'(rx[k].slot); destination=writeback_info[s];
+            if(rx[k].epoch!=epoch || !destination.valid) rx_ready[k]=1;
+            else if(!destination.dest_valid || rx[k].kind==9) rx_ready[k]=1;
             else begin
-                b=int'(e.dest_fp)*8+int'(e.pdst[2:0]);p=4+2*b;
+                b=int'(destination.dest_fp)*8+int'(destination.pdst[2:0]);p=4+2*b;
                 if(bank_writes[b]==0 && tx_ready[p]) begin
                     rx_ready[k]=1;bank_writes[b]=1;bank_reads[b]=1;
                     packet=rx[k];packet.destination=255;
                     tx_valid[p]=1;bank_packets[p-4]=packet;
-                    prf_we[b]=1;prf_waddr[b]=e.pdst[7:3];
-                    prf_wdata[b]=e.dest_fp?rx[k].data[0]:{32'b0,rx[k].data[0][31:0]};
+                    prf_we[b]=1;prf_waddr[b]=destination.pdst[7:3];
+                    prf_wdata[b]=destination.dest_fp?rx[k].data[0]:{32'b0,rx[k].data[0][31:0]};
                 end
             end
         end
@@ -417,7 +397,7 @@ module hybrid_top #(
         // traverses the fabric back to the tagged execution reservation.
         for(int k=0;k<4;k++) if(rx_valid[k]) begin
             s=int'(rx[k].slot);
-            if(rx[k].epoch!=epoch || !entries[s].valid) rx_ready[k]=1;
+            if(rx[k].epoch!=epoch || !writeback_info[s].valid) rx_ready[k]=1;
             else begin
                 for(o=0;o<3;o++) begin
                     if(!rx[k].data[o][9]) completed[k][o]=1;
@@ -439,11 +419,10 @@ module hybrid_top #(
         end
         for(int k=4;k<RESULT;k++) rx_ready[k]=1;
         for(int l=0;l<4;l++) if(selected[l]>=0 && !flush && !debug_halted) begin
-            s=selected[l];e=entries[s];
-            u=is_memory(e.d)?4'(LSU_BASE):e.d.fp_compute?4'(FP_BASE):e.d.muldiv?4'(MUL_BASE):0;
+            s=selected[l];command=issue_info[s];u=command.category;
             tx_valid[l]=1;routed[l].epoch=epoch;routed[l].slot=7'(s);routed[l].destination=8'(u);
-            routed[l].instruction=e.instruction;routed[l].pc=e.pc;
-            for(o=0;o<3;o++) routed[l].data[o]={54'b0,e.src_used[o],e.src_fp[o],e.src[o]};
+            routed[l].instruction=command.instruction;routed[l].pc=command.pc;
+            for(o=0;o<3;o++) routed[l].data[o]={54'b0,command.src_used[o],command.src_fp[o],command.src[o]};
         end
         for(int unit=0;unit<UNITS;unit++) begin
             s=executing[unit];
@@ -735,12 +714,12 @@ module hybrid_top #(
 `endif
     end
     always_comb begin: ready_acknowledgements
-        entry_t e;
+        writeback_info_t e;
         logic accept;
         logic [PHYS-1:0] mask;
         acknowledged[0]=0;acknowledged[1]=0;e='0;accept=0;mask=0;
         for(int k=4;k<RESULT;k++) begin
-            e=entries[rx[k].slot];
+            e=writeback_info[rx[k].slot];
             accept=rx_valid[k] && rx_ready[k] && rx[k].epoch==epoch &&
                    rx[k].kind==8 && e.valid && e.dest_valid;
             mask=(PHYS'(1)<<e.pdst) & {PHYS{accept}};
@@ -958,75 +937,3 @@ module hybrid_top #(
 `endif
     // synthesis translate_on
 endmodule
-
-// One update circuit per row; packet inputs are shared across the ROB.
-module hybrid_rob (
-    input logic clk, rst_n, flush,
-    input logic [6:0] head,
-    input logic [31:0] epoch, csr_write_data,
-    input logic [2:0] commit_count,
-    input logic [hybrid_pkg::CHANNELS-1:0] tx_valid, rx_valid, rx_ready,
-    input hybrid_pkg::message_t tx[hybrid_pkg::CHANNELS], rx[hybrid_pkg::CHANNELS],
-    input hybrid_pkg::entry_t memory_completion[hybrid_pkg::LSUS],
-    input logic [hybrid_pkg::MULDIVS-1:0] mul_start,
-    input logic [hybrid_pkg::FPUS-1:0] fp_start,
-    input logic [hybrid_pkg::LSUS-1:0] memory_start,
-    input integer executing[hybrid_pkg::UNITS],
-    input logic [3:0] dispatch_valid,
-    input logic [6:0] dispatch_slot[4],
-    input hybrid_pkg::entry_t dispatch_entry[4],
-    output wire [hybrid_pkg::ROB*$bits(hybrid_pkg::entry_t)-1:0] data
-);
-    import hybrid_pkg::*;
-    localparam RESULT=36;
-    entry_t entries[ROB];
-    for(genvar row=0;row<ROB;row++)
-        assign data[row*$bits(entry_t)+:$bits(entry_t)]=entries[row];
-    // Preserve row hierarchy in synthesis; expand the shared update function
-    // only once. The simulator iterates rows without copying packet ports.
-`ifdef SYNTHESIS
-    for(genvar row=0;row<ROB;row++) begin: rows
-        hybrid_rob_row storage (
-            .clk(clk),.rst_n(rst_n),.flush(flush),.head(head),.slot(7'(row)),
-            .epoch(epoch),.csr_write_data(csr_write_data),.commit_count(commit_count),
-            .tx_valid(tx_valid),.rx_valid(rx_valid),.rx_ready(rx_ready),.tx(tx),.rx(rx),
-            .memory_completion(memory_completion),.mul_start(mul_start),.fp_start(fp_start),
-            .memory_start(memory_start),.executing(executing),.dispatch_valid(dispatch_valid),
-            .dispatch_slot(dispatch_slot),.dispatch_entry(dispatch_entry),.entry(entries[row])
-        );
-    end
-`else
-    `include "rtl/top/hybrid_rob_update.svh"
-    entry_t next_entries[ROB];
-    always_comb
-        for(int row=0;row<ROB;row++) next_entries[row]=row_update(entries[row],7'(row));
-    always_ff @(posedge clk) entries<=next_entries;
-`endif
-endmodule
-
-`ifdef SYNTHESIS
-module hybrid_rob_row (
-    input logic clk, rst_n, flush,
-    input logic [6:0] head, slot,
-    input logic [31:0] epoch, csr_write_data,
-    input logic [2:0] commit_count,
-    input logic [hybrid_pkg::CHANNELS-1:0] tx_valid, rx_valid, rx_ready,
-    input hybrid_pkg::message_t tx[hybrid_pkg::CHANNELS], rx[hybrid_pkg::CHANNELS],
-    input hybrid_pkg::entry_t memory_completion[hybrid_pkg::LSUS],
-    input logic [hybrid_pkg::MULDIVS-1:0] mul_start,
-    input logic [hybrid_pkg::FPUS-1:0] fp_start,
-    input logic [hybrid_pkg::LSUS-1:0] memory_start,
-    input integer executing[hybrid_pkg::UNITS],
-    input logic [3:0] dispatch_valid,
-    input logic [6:0] dispatch_slot[4],
-    input hybrid_pkg::entry_t dispatch_entry[4],
-    output hybrid_pkg::entry_t entry
-);
-    import hybrid_pkg::*;
-    localparam RESULT=36;
-    `include "rtl/top/hybrid_rob_update.svh"
-    entry_t next_entry;
-    always_comb next_entry=row_update(entry,slot);
-    always_ff @(posedge clk) entry<=next_entry;
-endmodule
-`endif

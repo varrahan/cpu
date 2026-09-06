@@ -50,6 +50,45 @@ package hybrid_pkg;
         logic [31:0] memory_addr, memory_rdata, memory_wdata, csr_wdata;
         logic [3:0] rmask, wmask;
     } entry_t;
+    typedef struct packed {
+        logic fault;
+        logic [63:0] result;
+        logic [31:0] next_pc, cause, tval;
+        logic [4:0] flags;
+    } rob_completion_t;
+    typedef struct packed {
+        logic [31:0] addr, rdata, wdata;
+        logic [3:0] rmask, wmask;
+    } memory_trace_t;
+    typedef struct packed {
+        logic valid, dest_valid, dest_fp;
+        logic [7:0] pdst;
+    } writeback_info_t;
+    typedef struct packed {
+        logic [31:0] instruction, pc;
+        logic [2:0] src_used, src_fp;
+        logic [2:0][7:0] src;
+        logic [$clog2(UNITS)-1:0] category;
+    } issue_info_t;
+    // A seven-level binary priority tree finds the first set bit. Search the
+    // caller's circular priority mask first, then wrap to physical slot zero.
+    function automatic integer select_oldest(
+        input logic [ROB-1:0] candidates, priority_mask
+    );
+        logic [ROB-1:0] remaining;
+        logic [6:0] index;
+        integer b;
+        remaining=candidates & priority_mask;
+        if(remaining==0) remaining=candidates;
+        index=0;
+        for(b=6;b>=0;b--) begin
+            if((remaining & ((ROB'(1)<<(1<<b))-ROB'(1)))==0) begin
+                index[b]=1;remaining >>= 1<<b;
+            end
+        end
+        return candidates==0 ? -1 : int'(index);
+    endfunction
+
     function automatic integer allocate_register(input logic [PHYS-1:0] available,
                                                  input integer first_bank);
         integer bank_choice[8], bank, chosen, b, row, offset;
