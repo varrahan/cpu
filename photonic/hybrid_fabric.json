@@ -1,0 +1,28 @@
+{
+  "status": "architecture model; no characterized optical PHY or electronic timing",
+  "data_channels": 52,
+  "credit_channels": 52,
+  "wavelengths_per_waveguide": 32,
+  "group_sizes": [1, 2, 4, 8],
+  "queue_depth": 8,
+  "credit_bits": 33,
+  "line_rate_gbps": null,
+  "electrical_to_optical_ns": null,
+  "optical_to_electrical_ns": null,
+  "propagation_ns": null,
+  "credit_return_ns": null,
+  "receiver_capacity_gbps": null,
+  "laser_power_mw": null,
+  "path_loss_db": null,
+  "receiver_sensitivity_dbm": null,
+  "thermal_trim_ghz": null,
+  "electronic_fmax_ghz": null,
+  "four_wide_integer_frames_per_cycle": {
+    "issue_and_register_requests": 4,
+    "operand_responses": 8,
+    "execution_results": 4,
+    "writeback_acknowledgements": 4,
+    "instruction_line_requests": 1,
+    "instruction_line_responses": 1
+  }
+}
