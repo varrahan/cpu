@@ -20,5 +20,12 @@
   },
   "containers": {
     "act4": "ghcr.io/riscv/act4-build:act4@sha256:6c1967e40bb17ef23b9a175529882128dd04d76990f13fafa7c9756bac761a77"
+  },
+  "downloads": {
+    "sv2v": {
+      "version": "0.0.13",
+      "url": "https://github.com/zachjs/sv2v/releases/download/v0.0.13/sv2v-Linux.zip",
+      "sha256": "552799a1d76cd177b9b4cc63a3e77823a3d2a6eb4ec006569288abeff28e1ff8"
+    }
   }
 }

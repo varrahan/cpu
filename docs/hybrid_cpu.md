@@ -1,6 +1,6 @@
 # Four-wide hybrid RV32GC CPU
 
-`rtl/hybrid/hybrid_top.sv` preserves the RV32GC/ILP32D architectural interface:
+`rtl/top/hybrid_top.sv` preserves the RV32GC/ILP32D architectural interface:
 32 integer and 32 FP architectural registers, M/S/U privilege, PMP, Sv32,
 interrupts, debug, and the existing one-outstanding instruction/data ports.
 Arithmetic, scheduling, and storage are electronic. Photonics is the shared

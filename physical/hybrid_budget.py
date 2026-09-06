@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def message_bits():
-    source = (ROOT / "rtl/hybrid/hybrid_pkg.sv").read_text()
+    source = (ROOT / "rtl/top/hybrid_pkg.sv").read_text()
     body = source.split("typedef struct packed {", 1)[1].split("} message_t;", 1)[0]
     return sum(math.prod(int(a) - int(b) + 1 for a, b in
                          re.findall(r"\[(\d+):(\d+)\]", field)) or 1
